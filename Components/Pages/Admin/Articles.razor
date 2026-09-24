@@ -1,0 +1,251 @@
+@page "/admin/articles"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<div class="admin-header-row">
+    <div>
+        <h1>Articles</h1>
+        <p class="admin-users-sub">Manage your knowledge base guides and documentation.</p>
+    </div>
+    <div class="header-actions">
+        <div class="filter-search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="search" placeholder="Search articles by title" value="@searchTerm" @oninput="OnSearchChanged" />
+        </div>
+        <select class="filter-select" value="@(selectedCategoryId?.ToString() ?? "all")" @onchange="OnCategoryFilterChanged">
+            <option value="all">All categories</option>
+            @if (categories is not null)
+            {
+                @foreach (var category in categories)
+                {
+                    <option value="@category.Id">@category.Name</option>
+                    @foreach (var sub in category.SubCategories.OrderBy(s => s.SortOrder))
+                    {
+                        <option value="@sub.Id">— @sub.Name</option>
+                    }
+                }
+            }
+        </select>
+        <select class="filter-select" value="@(showDrafts ? "all" : "published")" @onchange="OnFilterChanged">
+            <option value="published">Published only</option>
+            <option value="all">All (incl. drafts)</option>
+        </select>
+        @if (!isReadOnly)
+        {
+            <a class="btn-primary" href="/admin/articles/new">+ New article</a>
+        }
+        else
+        {
+            <span class="readonly-pill">Read-Only Viewer</span>
+        }
+    </div>
+</div>
+
+@if (articles is null)
+{
+    <p>Loading…</p>
+}
+else if (!articles.Any())
+{
+    <p class="empty-state">
+        @if (selectedCategoryId.HasValue)
+        {
+            <text>No articles in this category yet.</text>
+        }
+        else
+        {
+            <text>No articles yet. Create your first one.</text>
+        }
+    </p>
+}
+else
+{
+    <div class="table-scroll">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Status</th>
+                <th>Views</th>
+                <th>Updated</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var article in articles)
+            {
+                <tr class="@(!article.IsPublished ? "draft-row" : "")">
+                    <td>
+                        @if (!isReadOnly)
+                        {
+                            <a href="@($"/admin/articles/{article.Id}/edit")">@article.Title</a>
+                        }
+                        else
+                        {
+                            <a href="@($"/article/{article.Id}")">@article.Title</a>
+                        }
+                        @if (article.IsFeatured) { <span class="featured-badge" title="Featured guide">★</span> }
+                        @if (article.ScheduledPublishAt.HasValue) { <span class="scheduled-badge" title="Scheduled">⏰</span> }
+                    </td>
+                    <td>@article.Category?.Name</td>
+                    <td>
+                        @if (!article.IsPublished)
+                        {
+                            <span class="status-badge draft">Draft</span>
+                        }
+                        else if (article.ScheduledPublishAt.HasValue && article.ScheduledPublishAt > DateTime.UtcNow)
+                        {
+                            <span class="status-badge scheduled">Scheduled</span>
+                        }
+                        else
+                        {
+                            <span class="status-badge published">Published</span>
+                        }
+                    </td>
+                    <td>@article.ViewCount.ToString("N0")</td>
+                    <td>@article.UpdatedAt.ToString("MMM d, yyyy")</td>
+                    <td class="row-actions">
+                        @if (!isReadOnly)
+                        {
+                            <a href="@($"/admin/articles/{article.Id}/edit")">Edit</a>
+                        }
+                        <a href="@($"/article/{article.Id}")" class="link-muted">View</a>
+                        @if (!isReadOnly)
+                        {
+                            @if (article.IsPublished)
+                            {
+                                <button type="button" class="link-muted" @onclick="() => Unpublish(article.Id)">Unpublish</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="link-muted" @onclick="() => Publish(article.Id)">Publish</button>
+                            }
+                            <button type="button" class="link-danger" @onclick="() => Delete(article.Id, article.Title)">Delete</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+}
+
+@code {
+    private List<Article>? allArticles;
+    private List<Article>? articles;
+    private List<Category>? categories;
+    private bool showDrafts = true;
+    private bool isReadOnly = true;
+    private int? selectedCategoryId;
+    private string searchTerm = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+        isReadOnly = !await PermissionService.IsAllowedAsync(role, Permissions.ArticlesManage);
+
+        categories = await ArticleService.GetCategoriesAsync(true);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        allArticles = await ArticleService.GetAllArticlesAsync(showDrafts);
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        var query = allArticles?.AsEnumerable() ?? Enumerable.Empty<Article>();
+        if (selectedCategoryId is not null)
+            query = query.Where(a => a.CategoryId == selectedCategoryId.Value);
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+            query = query.Where(a => a.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+        articles = query.ToList();
+    }
+
+    private void OnSearchChanged(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        ApplyFilters();
+    }
+
+    private async Task OnCategoryFilterChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        selectedCategoryId = string.IsNullOrEmpty(value) || value == "all" ? null : int.Parse(value);
+        // Category list doesn't depend on the draft/published toggle, so just
+        // re-filter the already-loaded set rather than re-querying the database.
+        ApplyFilters();
+        await Task.CompletedTask;
+    }
+
+    // Explicit onchange + string values instead of @bind="showDrafts" on a
+    // bool-backed <select>. The two option values were "True"/"False" —
+    // correct in principle, but @bind's select handling only reconciles the
+    // element's selected option on the client after the circuit attaches;
+    // the option you actually clicked can silently not resolve back to the
+    // bool the framework expects, so the change event fires but Load()
+    // reruns with the same value as before. Comparing plain strings
+    // ("all" / "published") removes that ambiguity entirely.
+    private async Task OnFilterChanged(ChangeEventArgs e)
+    {
+        showDrafts = e.Value?.ToString() == "all";
+        await Load();
+    }
+
+    private async Task Delete(int id, string title)
+    {
+        if (isReadOnly) return;
+
+        var confirmed = await Confirm.ShowAsync("Delete article?", $"Delete \"{title}\"? It'll move to the Recycle Bin and can be restored later.");
+        if (!confirmed) return;
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+        await ArticleService.DeleteArticleAsync(id, username);
+        await Load();
+    }
+
+    private async Task Publish(int id)
+    {
+        if (isReadOnly) return;
+        var article = articles?.FirstOrDefault(a => a.Id == id);
+        if (article != null)
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "admin";
+
+            // SetPublishedStateAsync flips only the published flag. This used to call
+            // UpdateArticleAsync(article, article.Steps, ...) — but this list is loaded
+            // without its steps (GetAllArticlesAsync doesn't Include them), so
+            // article.Steps was always an empty list and "replacing" the steps with it
+            // permanently deleted every step of the article being published.
+            await ArticleService.SetPublishedStateAsync(article.Id, true, username, "Published from the articles list");
+            await Load();
+        }
+    }
+
+    private async Task Unpublish(int id)
+    {
+        if (isReadOnly) return;
+        var article = articles?.FirstOrDefault(a => a.Id == id);
+        if (article != null)
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "admin";
+
+            // Same reason as Publish above: only touch the flag, never the steps.
+            await ArticleService.SetPublishedStateAsync(article.Id, false, username, "Unpublished from the articles list");
+            await Load();
+        }
+    }
+}

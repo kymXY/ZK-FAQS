@@ -1,0 +1,200 @@
+@inject ArticleService ArticleService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+
+<button class="search-trigger" type="button" @onclick="Open" @ref="triggerButton">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    <span>Search FAQs and guides…</span>
+    <kbd class="search-shortcut">@shortcutLabel</kbd>
+</button>
+
+@if (isOpen)
+{
+    <div class="overlay-scrim open" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1" @ref="scrimRef">
+        <div class="overlay-panel" role="dialog" aria-modal="true" aria-label="Search FAQs" @onclick:stopPropagation="true">
+
+            <div class="overlay-search-row">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" placeholder="Search topics — try “payroll”" autocomplete="off"
+                       value="@query" @oninput="OnQueryChanged" @onkeydown="HandleKeyDown" @ref="searchInput" />
+                <button class="overlay-close" type="button" @onclick="Close" aria-label="Close search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+
+            <div class="overlay-body">
+                <div class="overlay-results">
+                    <div class="eyebrow">List of topics</div>
+                    @if (results is null)
+                    {
+                        <div class="no-results">Loading…</div>
+                    }
+                    else if (results.Count == 0)
+                    {
+                        <div class="no-results">No topics match your search.</div>
+                    }
+                    else
+                    {
+                        @for (var i = 0; i < results.Count; i++)
+                        {
+                            var idx = i;
+                            var article = results[idx];
+                            <button type="button" class="result-item @(idx == selectedIndex ? "selected" : "")" @onclick="() => Select(idx)">
+                                <span class="module">@article.Category?.Name</span>
+                                <span class="title">@article.Title</span>
+                                @if (article.ArticleTags?.Any() == true)
+                                {
+                                    <div class="result-tags">
+                                        @foreach (var at in article.ArticleTags.Take(3))
+                                        {
+                                            <span class="mini-tag" style="--tag-color: @at.Tag?.Color">@at.Tag?.Name</span>
+                                        }
+                                    </div>
+                                }
+                            </button>
+                        }
+                    }
+                </div>
+                <div class="overlay-preview">
+                    @if (SelectedArticle is not null)
+                    {
+                        <div class="eyebrow">Preview contents</div>
+                        @if (SelectedArticle.ArticleTags?.Any() == true)
+                        {
+                            <div class="preview-tags">
+                                @foreach (var at in SelectedArticle.ArticleTags)
+                                {
+                                    <span class="tag" style="--tag-color: @at.Tag?.Color">@at.Tag?.Name</span>
+                                }
+                            </div>
+                        }
+                        <h2>@SelectedArticle.Title</h2>
+                        <p>@SelectedArticle.Summary</p>
+                        <button class="overview-btn" type="button" @onclick="GoToArticle">
+                            View full guide
+                            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                        </button>
+                    }
+                </div>
+            </div>
+
+        </div>
+    </div>
+}
+
+@code {
+    private bool isOpen;
+    private string query = "";
+    private List<Article>? results;
+    private int selectedIndex;
+    private ElementReference triggerButton;
+    private ElementReference searchInput;
+    private ElementReference scrimRef;
+
+    // Rendered server-side first, so start with the neutral Windows label and
+    // swap to the Mac symbol only if the browser says so. Previously this was
+    // hardcoded to the Mac glyph, which meant Windows users saw a key
+    // combination that does not exist on their keyboard.
+    private string shortcutLabel = "Ctrl K";
+
+    private Article? SelectedArticle =>
+        results is { Count: > 0 } && selectedIndex < results.Count ? results[selectedIndex] : null;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Register global keyboard shortcut
+            await JS.InvokeVoidAsync("registerSearchShortcut", DotNetObjectReference.Create(this));
+
+            var label = await JS.InvokeAsync<string>("getShortcutLabel");
+            if (!string.IsNullOrEmpty(label) && label != shortcutLabel)
+            {
+                shortcutLabel = label;
+                StateHasChanged();
+            }
+        }
+    }
+
+    [JSInvokable]
+    public async Task OpenFromShortcut()
+    {
+        await Open();
+    }
+
+    private async Task Open()
+    {
+        isOpen = true;
+        query = "";
+        selectedIndex = 0;
+        results = await ArticleService.SearchArticlesAsync("");
+        StateHasChanged();
+        
+        // Focus the search input after render
+        await Task.Delay(50);
+        await searchInput.FocusAsync();
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+        query = "";
+        results = null;
+        selectedIndex = 0;
+    }
+
+    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            Close();
+        }
+        else if (e.Key == "ArrowDown")
+        {
+            if (results != null && selectedIndex < results.Count - 1)
+            {
+                selectedIndex++;
+                StateHasChanged();
+            }
+        }
+        else if (e.Key == "ArrowUp")
+        {
+            if (selectedIndex > 0)
+            {
+                selectedIndex--;
+                StateHasChanged();
+            }
+        }
+        else if (e.Key == "Enter")
+        {
+            if (SelectedArticle != null)
+            {
+                GoToArticle();
+            }
+        }
+    }
+
+    private async Task OnQueryChanged(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? "";
+        selectedIndex = 0;
+        results = await ArticleService.SearchArticlesAsync(query);
+    }
+
+    private void Select(int index) => selectedIndex = index;
+
+    private void GoToArticle()
+    {
+        if (SelectedArticle is not null)
+        {
+            isOpen = false;
+            Nav.NavigateTo($"/article/{SelectedArticle.Id}");
+        }
+    }
+
+    public void Dispose()
+    {
+        // Cleanup if needed
+    }
+}

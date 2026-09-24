@@ -1,0 +1,68 @@
+@page "/helpdesk"
+@inject ArticleService ArticleService
+@inject SettingsService SettingsService
+@using CategoryModel = FaqCms.Models.Category
+
+<div class="helpdesk-dashboard">
+    @if (settings is null)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <div class="dashboard-hero">
+            <h1>Welcome to the Helpdesk</h1>
+            <p>Everything you need to get the most out of the product — quick demo, key guides, and a summary of how payroll works.</p>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(settings.DemoVideoUrl))
+        {
+            <section class="dashboard-panel">
+                <h2>@settings.DemoVideoTitle</h2>
+                <div class="video-frame">
+                    @if (VideoEmbedHelper.IsUploadedFile(settings.DemoVideoUrl))
+                    {
+                        <video src="@settings.DemoVideoUrl" controls class="media-fill"></video>
+                    }
+                    else
+                    {
+                        <iframe src="@VideoEmbedHelper.ToEmbedUrl(settings.DemoVideoUrl)" title="@settings.DemoVideoTitle" allowfullscreen class="media-fill"></iframe>
+                    }
+                </div>
+            </section>
+        }
+
+        <section class="dashboard-panel">
+            <h2>@settings.PayrollSummaryTitle</h2>
+            <p class="dashboard-summary-body">@settings.PayrollSummaryBody</p>
+        </section>
+
+        @if (categories is { Count: > 0 })
+        {
+            <section class="dashboard-panel">
+                <h2>Browse by category</h2>
+                <div class="related-grid">
+                    @foreach (var category in categories.Where(c => c.IsVisible && (c.Articles.Any(a => a.IsPublished) || c.SubCategories.Any(s => s.Articles.Any(a => a.IsPublished)))))
+                    {
+                        <a href="@($"/category/{category.Slug}")" class="related-card" style="--tag-color: @category.Color">
+                            <span class="related-category">@category.Icon @category.Name</span>
+                            <h3>@category.Name</h3>
+                            <p>@category.Description</p>
+                        </a>
+                    }
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private HelpdeskSettings? settings;
+    private List<CategoryModel>? categories;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = await SettingsService.GetAsync();
+        categories = await ArticleService.GetCategoriesWithArticlesAsync();
+    }
+}

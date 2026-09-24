@@ -1,0 +1,235 @@
+@page "/admin/recycle-bin"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<div class="admin-header-row">
+    <div>
+        <h1>Recycle Bin</h1>
+        <p class="admin-users-sub">Deleted categories, tags and articles land here first — restore them or remove them for good.</p>
+    </div>
+</div>
+
+@if (errorMessage is not null)
+{
+    <p class="login-error">@errorMessage</p>
+}
+
+<div class="recycle-tabs">
+    <button type="button" class="tab-btn @(activeTab == "categories" ? "active" : "")" @onclick='() => activeTab = "categories"'>Categories (@(categories?.Count ?? 0))</button>
+    <button type="button" class="tab-btn @(activeTab == "tags" ? "active" : "")" @onclick='() => activeTab = "tags"'>Tags (@(tags?.Count ?? 0))</button>
+    <button type="button" class="tab-btn @(activeTab == "articles" ? "active" : "")" @onclick='() => activeTab = "articles"'>Articles (@(articles?.Count ?? 0))</button>
+</div>
+
+@if (categories is null || tags is null || articles is null)
+{
+    <p>Loading…</p>
+}
+else if (activeTab == "categories")
+{
+    @if (!CanManageCategories)
+    {
+        <p class="empty-state">You don't have permission to manage categories.</p>
+    }
+    else if (!categories.Any())
+    {
+        <p class="recycle-empty">Recycle Bin is empty — no deleted categories.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Name</th><th>Slug</th><th>Deleted</th><th>Deleted By</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var c in categories)
+                {
+                    <tr>
+                        <td>@c.Name</td>
+                        <td>@c.Slug</td>
+                        <td>@c.DeletedAt?.ToLocalTime().ToString("g")</td>
+                        <td>@c.DeletedBy</td>
+                        <td>
+                            <button type="button" class="link-muted" @onclick="() => RestoreCategory(c)">Restore</button>
+                            <button type="button" class="link-danger" @onclick="() => PurgeCategory(c)">Delete permanently</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+}
+else if (activeTab == "tags")
+{
+    @if (!CanManageTags)
+    {
+        <p class="empty-state">You don't have permission to manage tags.</p>
+    }
+    else if (!tags.Any())
+    {
+        <p class="recycle-empty">Recycle Bin is empty — no deleted tags.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Name</th><th>Slug</th><th>Deleted</th><th>Deleted By</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var t in tags)
+                {
+                    <tr>
+                        <td>@t.Name</td>
+                        <td>@t.Slug</td>
+                        <td>@t.DeletedAt?.ToLocalTime().ToString("g")</td>
+                        <td>@t.DeletedBy</td>
+                        <td>
+                            <button type="button" class="link-muted" @onclick="() => RestoreTag(t)">Restore</button>
+                            <button type="button" class="link-danger" @onclick="() => PurgeTag(t)">Delete permanently</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+}
+else if (activeTab == "articles")
+{
+    @if (!CanManageArticles)
+    {
+        <p class="empty-state">You don't have permission to manage articles.</p>
+    }
+    else if (!articles.Any())
+    {
+        <p class="recycle-empty">Recycle Bin is empty — no deleted articles.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Title</th><th>Category</th><th>Deleted</th><th>Deleted By</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var a in articles)
+                {
+                    <tr>
+                        <td>@a.Title</td>
+                        <td>@(a.Category?.Name ?? "—")</td>
+                        <td>@a.DeletedAt?.ToLocalTime().ToString("g")</td>
+                        <td>@a.DeletedBy</td>
+                        <td>
+                            <button type="button" class="link-muted" @onclick="() => RestoreArticle(a)">Restore</button>
+                            <button type="button" class="link-danger" @onclick="() => PurgeArticle(a)">Delete permanently</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+}
+
+@code {
+    private List<Category>? categories;
+    private List<Tag>? tags;
+    private List<Article>? articles;
+    private string activeTab = "categories";
+    private string? errorMessage;
+    private bool CanManageCategories, CanManageTags, CanManageArticles;
+    private string username = "admin";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        username = authState.User.Identity?.Name ?? "admin";
+        var role = await UserService.GetUserRoleAsync(username);
+        CanManageCategories = await PermissionService.IsAllowedAsync(role, Permissions.CategoriesManage);
+        CanManageTags = await PermissionService.IsAllowedAsync(role, Permissions.TagsManage);
+        CanManageArticles = await PermissionService.IsAllowedAsync(role, Permissions.ArticlesManage);
+
+        if (CanManageArticles) activeTab = "articles";
+        if (CanManageTags) activeTab = "tags";
+        if (CanManageCategories) activeTab = "categories";
+
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        categories = await ArticleService.GetDeletedCategoriesAsync();
+        tags = await ArticleService.GetDeletedTagsAsync();
+        articles = await ArticleService.GetDeletedArticlesAsync();
+    }
+
+    private async Task RestoreCategory(Category c)
+    {
+        if (!CanManageCategories) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Restore category?", $"Restore \"{c.Name}\"? It'll reappear wherever categories are listed.", "Restore", danger: false);
+        if (!confirmed) return;
+
+        var ok = await ArticleService.RestoreCategoryAsync(c.Id, username);
+        if (!ok) errorMessage = $"Couldn't restore \"{c.Name}\" — its name or slug is already used by another category. Rename or remove that one first.";
+        await Load();
+    }
+
+    private async Task PurgeCategory(Category c)
+    {
+        if (!CanManageCategories) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Delete permanently?", $"Permanently delete \"{c.Name}\"? This cannot be undone — it will not be recoverable.", "Delete permanently");
+        if (!confirmed) return;
+
+        await ArticleService.PermanentlyDeleteCategoryAsync(c.Id, username);
+        await Load();
+    }
+
+    private async Task RestoreTag(Tag t)
+    {
+        if (!CanManageTags) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Restore tag?", $"Restore \"{t.Name}\"?", "Restore", danger: false);
+        if (!confirmed) return;
+
+        var ok = await ArticleService.RestoreTagAsync(t.Id, username);
+        if (!ok) errorMessage = $"Couldn't restore \"{t.Name}\" — its name or slug is already used by another tag. Rename or remove that one first.";
+        await Load();
+    }
+
+    private async Task PurgeTag(Tag t)
+    {
+        if (!CanManageTags) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Delete permanently?", $"Permanently delete \"{t.Name}\"? This cannot be undone.", "Delete permanently");
+        if (!confirmed) return;
+
+        await ArticleService.PermanentlyDeleteTagAsync(t.Id, username);
+        await Load();
+    }
+
+    private async Task RestoreArticle(Article a)
+    {
+        if (!CanManageArticles) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Restore article?", $"Restore \"{a.Title}\"?", "Restore", danger: false);
+        if (!confirmed) return;
+
+        var ok = await ArticleService.RestoreArticleAsync(a.Id, username);
+        if (!ok) errorMessage = $"Couldn't restore \"{a.Title}\" — either its slug is now used by another article, or its category is still in the Recycle Bin (restore the category first).";
+        await Load();
+    }
+
+    private async Task PurgeArticle(Article a)
+    {
+        if (!CanManageArticles) return;
+        errorMessage = null;
+        var confirmed = await Confirm.ShowAsync("Delete permanently?", $"Permanently delete \"{a.Title}\"? This cannot be undone.", "Delete permanently");
+        if (!confirmed) return;
+
+        await ArticleService.PermanentlyDeleteArticleAsync(a.Id, username);
+        await Load();
+    }
+}

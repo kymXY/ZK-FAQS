@@ -1,0 +1,101 @@
+@page "/admin/roles"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject PermissionService PermissionService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject NavigationManager Nav
+
+<h1>Roles &amp; Access</h1>
+<p class="admin-users-sub">
+    Turn actions on or off per role. Changes apply immediately to everyone with that role.
+    <strong>Super Admin</strong> always has full access and isn't shown here — that can't be changed, so there's
+    always at least one role that can undo a mistake made here.
+</p>
+
+@if (!isSuperAdmin)
+{
+    <div class="role-info-banner viewer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>Access restricted: Super Admin role required. Redirecting...</span>
+    </div>
+}
+else if (matrix is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (statusMessage is not null)
+    {
+        <p class="admin-users-status">@statusMessage</p>
+    }
+
+    <div class="table-scroll">
+    <table class="admin-table roles-matrix">
+        <thead>
+            <tr>
+                <th>Permission</th>
+                @foreach (var role in Permissions.ConfigurableRoles)
+                {
+                    <th>@role</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var (key, label, description) in Permissions.All)
+            {
+                <tr>
+                    <td>
+                        <span class="category-name">@label</span>
+                        <span class="helper-text">@description</span>
+                    </td>
+                    @foreach (var role in Permissions.ConfigurableRoles)
+                    {
+                        <td class="roles-matrix-cell">
+                            <input type="checkbox"
+                                   checked="@matrix[role][key]"
+                                   @onchange="e => Toggle(role, key, (bool)e.Value!)" />
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+}
+
+@code {
+    private Dictionary<string, Dictionary<string, bool>>? matrix;
+    private bool isSuperAdmin;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+        isSuperAdmin = role == "SuperAdmin";
+
+        if (!isSuperAdmin)
+        {
+            Nav.NavigateTo("/admin/articles");
+            return;
+        }
+
+        matrix = await PermissionService.GetMatrixAsync();
+    }
+
+    private async Task Toggle(string role, string permissionKey, bool allowed)
+    {
+        if (!isSuperAdmin || matrix is null) return;
+
+        matrix[role][permissionKey] = allowed;
+        await PermissionService.SetAsync(role, permissionKey, allowed);
+        statusMessage = $"Updated {role}.";
+    }
+}

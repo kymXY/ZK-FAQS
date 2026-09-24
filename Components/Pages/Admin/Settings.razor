@@ -1,0 +1,139 @@
+@page "/admin/settings"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject SettingsService SettingsService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject NavigationManager Nav
+@inject IWebHostEnvironment Env
+
+<div class="admin-header-row">
+    <div>
+        <h1>Site Settings</h1>
+        <p class="admin-users-sub">Controls what shows on the public Helpdesk dashboard at /helpdesk.</p>
+    </div>
+    @if (isReadOnly)
+    {
+        <span class="readonly-pill">Read-Only Viewer</span>
+    }
+</div>
+
+@if (model is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <EditForm Model="model" OnValidSubmit="Save">
+        <fieldset disabled="@isReadOnly">
+            <label class="field">
+                <span>Demo video title</span>
+                <InputText @bind-Value="model.DemoVideoTitle" />
+            </label>
+
+            <div class="field">
+                <span>Demo video</span>
+                <InputText @bind-Value="model.DemoVideoUrl" placeholder="Paste an embed URL (e.g. YouTube) — or upload a file below" />
+                <span class="field-hint">
+                    YouTube: any watch/share link works. SharePoint/OneDrive: use the file's own
+                    <strong>Embed</strong> link (Share → Embed → copy the URL out of the &lt;iframe&gt; code) —
+                    a plain "Copy link" share link won't play here.
+                </span>
+                <div class="media-upload-row">
+                    <InputFile OnChange="OnVideoSelected" accept="video/*" />
+                    @if (videoUploading) { <span class="upload-status">Uploading…</span> }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(model.DemoVideoUrl))
+                {
+                    <div class="media-preview">
+                        @if (VideoEmbedHelper.IsUploadedFile(model.DemoVideoUrl))
+                        {
+                            <video src="@model.DemoVideoUrl" controls></video>
+                        }
+                        else
+                        {
+                            <iframe src="@VideoEmbedHelper.ToEmbedUrl(model.DemoVideoUrl)" class="media-preview-frame" allowfullscreen></iframe>
+                            @if (VideoEmbedHelper.IsLikelySharePointShareLink(model.DemoVideoUrl))
+                            {
+                                <p class="field-warning">This looks like a SharePoint "share" link rather than an "Embed" link — it may show blank. See the hint above.</p>
+                            }
+                        }
+                    </div>
+                }
+            </div>
+
+            <label class="field">
+                <span>Payroll summary title</span>
+                <InputText @bind-Value="model.PayrollSummaryTitle" />
+            </label>
+
+            <label class="field">
+                <span>Payroll summary</span>
+                <InputTextArea @bind-Value="model.PayrollSummaryBody" rows="4" />
+            </label>
+        </fieldset>
+
+        @if (!isReadOnly)
+        {
+            <div class="form-actions">
+                <button type="submit" class="btn-primary">Save settings</button>
+                <a href="/helpdesk" target="_blank" class="btn-secondary">View dashboard</a>
+            </div>
+        }
+    </EditForm>
+
+    @if (savedMessage)
+    {
+        <p class="helper-text" style="color:var(--green-bright)">Saved.</p>
+    }
+}
+
+@code {
+    private HelpdeskSettings? model;
+    private bool isReadOnly = true;
+    private bool videoUploading;
+    private bool savedMessage;
+    private const long MaxUploadBytes = 200 * 1024 * 1024; // 200 MB
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+        isReadOnly = !await PermissionService.IsAllowedAsync(role, Permissions.SettingsManage);
+        if (isReadOnly)
+        {
+            Nav.NavigateTo("/admin", true);
+            return;
+        }
+
+        model = await SettingsService.GetAsync();
+    }
+
+    private async Task OnVideoSelected(InputFileChangeEventArgs e)
+    {
+        videoUploading = true;
+        StateHasChanged();
+
+        var folder = Path.Combine(Env.WebRootPath, "uploads", "settings");
+        Directory.CreateDirectory(folder);
+        var extension = Path.GetExtension(e.File.Name);
+        var fileName = $"{Guid.NewGuid()}{extension}";
+        var fullPath = Path.Combine(folder, fileName);
+
+        await using var readStream = e.File.OpenReadStream(MaxUploadBytes);
+        await using var writeStream = new FileStream(fullPath, FileMode.Create);
+        await readStream.CopyToAsync(writeStream);
+
+        model!.DemoVideoUrl = $"/uploads/settings/{fileName}";
+        videoUploading = false;
+    }
+
+    private async Task Save()
+    {
+        if (isReadOnly || model is null) return;
+        await SettingsService.SaveAsync(model);
+        savedMessage = true;
+    }
+}

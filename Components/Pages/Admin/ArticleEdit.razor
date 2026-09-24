@@ -1,0 +1,1454 @@
+@page "/admin/articles/new"
+@page "/admin/articles/{Id:int}/edit"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@implements IDisposable
+@inject ArticleService ArticleService
+@inject NavigationManager Nav
+@inject IWebHostEnvironment Env
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ILogger<ArticleEdit> Logger
+
+@if (categories is null || tags is null)
+{
+    <p class="ed-loading">Loading…</p>
+}
+else
+{
+    <EditForm Model="model" OnValidSubmit="Save" OnInvalidSubmit="OnInvalidSubmit">
+        <DataAnnotationsValidator />
+
+        <div class="ed-head">
+            <div class="ed-titles">
+                <p class="crumb">
+                    Articles
+                    @if (PreviewCategoryName != "(no category)")
+                    {
+                        <text> / @PreviewCategoryName</text>
+                    }
+                    / <b>@(string.IsNullOrWhiteSpace(model.Title) ? (Id is null ? "New article" : "Untitled") : model.Title)</b>
+                </p>
+                <h2>@(Id is null ? "New article" : "Edit article")</h2>
+            </div>
+
+            @if (lastAutosaveAt is not null)
+            {
+                <span class="ed-saved" title="Autosaves as a Draft every 20s — Cancel undoes it, Save article makes it permanent.">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                    Draft saved @FormatAutosaveTime()
+                </span>
+            }
+
+            <div class="ed-actions">
+                @if (Id is not null)
+                {
+                    <button type="button" class="btn-secondary ed-quiet" title="Version history" @onclick="ShowVersions">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        History
+                    </button>
+                }
+                <button type="button" class="btn-secondary" @onclick="OpenPreview">Preview</button>
+                <button type="button" class="btn-secondary ed-hide-narrow" @onclick="CancelEdit">Cancel</button>
+                <button type="submit" class="btn-primary ed-hide-narrow" disabled="@IsUploading">Save article</button>
+            </div>
+        </div>
+
+        @if (showValidationBanner)
+        {
+            <p class="field-warning ed-banner" role="alert">
+                This article can't be saved yet — the required fields marked
+                <span class="required-mark">*</span> below still need filling in.
+            </p>
+        }
+
+        @if (concurrentEditDetected)
+        {
+            <p class="field-warning ed-banner" role="alert">
+                This article was saved somewhere else since you opened it — another tab, another
+                admin, or a browser window you closed without saving. Autosaving has been paused so
+                those changes aren't overwritten. <strong>Save article</strong> still works and will
+                replace them with what's on this page; open the article fresh in a new tab first if
+                you'd rather check what changed.
+            </p>
+        }
+
+        @if (!string.IsNullOrEmpty(uploadError))
+        {
+            <p class="field-warning ed-banner" role="alert">
+                @uploadError
+                <button type="button" class="link-danger" @onclick="() => uploadError = null">Dismiss</button>
+            </p>
+        }
+        @if (IsUploading)
+        {
+            <p class="helper-text ed-banner">Waiting for a photo or video upload to finish before this can be saved…</p>
+        }
+
+        <div class="ed-body">
+
+            <div class="ed-main">
+
+                <section class="ed-card">
+                    <header><h3>Article</h3><span class="ed-card-hint">Shown in search and article lists</span></header>
+                    <div class="ed-card-body">
+                        <div class="field">
+                            <span>Title <span class="required-mark" title="Required">*</span></span>
+                            <InputText @bind-Value="model.Title" class="ed-title-input" />
+                            <ValidationMessage For="() => model.Title" class="field-error" />
+                        </div>
+
+                        <div class="field">
+                            <span>Summary <span class="required-mark" title="Required">*</span></span>
+                            <InputTextArea @bind-Value="model.Summary" rows="3" placeholder="One or two sentences describing what this article covers." />
+                            <ValidationMessage For="() => model.Summary" class="field-error" />
+                        </div>
+
+                        <div class="field">
+                            <span>Link address</span>
+                            <InputText @bind-Value="model.Slug" placeholder="auto-generated from title" />
+                            <span class="field-hint">Leave blank and we'll build it from the title.</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ed-card">
+                    <header><h3>Video</h3><span class="ed-card-hint">Optional</span></header>
+                    <div class="ed-card-body">
+                        <div class="ed-videobox">
+                            @if (!string.IsNullOrWhiteSpace(model.VideoUrl))
+                            {
+                                <div class="media-preview ed-video-preview">
+                                    @if (VideoEmbedHelper.IsUploadedFile(model.VideoUrl))
+                                    {
+                                        <video src="@model.VideoUrl" controls></video>
+                                    }
+                                    else
+                                    {
+                                        <iframe src="@VideoEmbedHelper.ToEmbedUrl(model.VideoUrl)" class="media-preview-frame" allowfullscreen></iframe>
+                                    }
+                                </div>
+                            }
+                            <div class="field ed-video-field">
+                                <span>Embed link</span>
+                                <InputText @bind-Value="model.VideoUrl" placeholder="Paste an embed URL (e.g. YouTube) — or upload a file below" />
+                                <span class="field-hint">
+                                    YouTube: any watch/share link works. SharePoint/OneDrive: use the file's own
+                                    <strong>Embed</strong> link (Share → Embed → copy the URL out of the &lt;iframe&gt; code) —
+                                    a plain "Copy link" share link won't play here.
+                                </span>
+                                @if (!string.IsNullOrWhiteSpace(model.VideoUrl) && VideoEmbedHelper.IsLikelySharePointShareLink(model.VideoUrl))
+                                {
+                                    <p class="field-warning">This looks like a SharePoint "share" link rather than an "Embed" link — it may show blank. See the hint above.</p>
+                                }
+                                <div class="media-upload-row">
+                                    <InputFile OnChange="OnArticleVideoSelected" accept="video/*" />
+                                    @if (articleVideoUploading) { <span class="upload-status">Uploading…</span> }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(model.VideoUrl))
+                                {
+                                    <button type="button" class="link-danger" @onclick="() => model.VideoUrl = string.Empty">Remove video</button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ed-card">
+                    <header>
+                        <h3>Steps</h3>
+                        <span class="ed-card-hint">
+                            @steps.Count step@(steps.Count == 1 ? "" : "s")
+                            @if (TotalStepMinutes is not null) { <text> · about @TotalStepMinutes min</text> }
+                        </span>
+                    </header>
+                    <div class="ed-card-body">
+                        <div class="ed-steps">
+                            @for (var i = 0; i < steps.Count; i++)
+                            {
+                                var idx = i;
+                                var step = steps[idx];
+                                var key = stepKeys[idx];
+                                <details class="ed-step" @key="key" open="@openStepKeys.Contains(key)">
+                                    <summary class="ed-step-head">
+                                        <span class="ed-step-num">@(idx + 1)</span>
+                                        <span class="ed-step-name @(string.IsNullOrWhiteSpace(step.Title) ? "ed-step-name-empty" : "")">
+                                            @(string.IsNullOrWhiteSpace(step.Title) ? "Untitled step" : step.Title)
+                                        </span>
+                                        <span class="ed-step-badges">
+                                            @if (!string.IsNullOrWhiteSpace(step.ImageUrl))
+                                            {
+                                                <span class="ed-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16l-5-5-6 6"/></svg>photo</span>
+                                            }
+                                            @if (step.EstimatedMinutes is not null)
+                                            {
+                                                <span class="ed-chip">@(step.EstimatedMinutes) min</span>
+                                            }
+                                            @if (step.IsOptional)
+                                            {
+                                                <span class="ed-chip">optional</span>
+                                            }
+                                        </span>
+                                        <span class="ed-step-move">
+                                            <button type="button" class="ed-move-btn" title="Move up" disabled="@(idx == 0)" @onclick="() => MoveStepUp(idx)" @onclick:stopPropagation="true" @onclick:preventDefault="true">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 15l6-6 6 6"/></svg>
+                                            </button>
+                                            <button type="button" class="ed-move-btn" title="Move down" disabled="@(idx == steps.Count - 1)" @onclick="() => MoveStepDown(idx)" @onclick:stopPropagation="true" @onclick:preventDefault="true">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                                            </button>
+                                        </span>
+                                        <span class="ed-step-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+                                    </summary>
+
+                                    <div class="ed-step-panel">
+                                        <div class="field">
+                                            <span>Step title</span>
+                                            <input placeholder="e.g. Go to Transactions" value="@step.Title"
+                                                   @oninput="e => step.Title = e.Value?.ToString() ?? string.Empty" />
+                                        </div>
+                                        <div class="field">
+                                            <span>What the person does</span>
+                                            <textarea rows="2" placeholder="e.g. Click Overtime, then fill in the hours worked."
+                                                      @oninput="e => step.Description = e.Value?.ToString() ?? string.Empty">@step.Description</textarea>
+                                        </div>
+
+                                        <div class="ed-step-media">
+                                            @if (!string.IsNullOrWhiteSpace(step.ImageUrl))
+                                            {
+                                                <span class="step-photo-preview ed-shot">
+                                                    <img src="@step.ImageUrl" alt="Step @(idx + 1) photo" onerror="this.classList.add('img-broken')" />
+                                                    <span class="img-broken-fallback">Photo failed to load — try removing and re-uploading it.</span>
+                                                </span>
+                                            }
+                                            else if (stepUploading.Contains(idx))
+                                            {
+                                                <span class="ed-shot ed-shot-uploading">Uploading…</span>
+                                            }
+                                            else
+                                            {
+                                                <label class="ed-shot ed-shot-empty">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M20 16v3a2 2 0 01-2 2H6a2 2 0 01-2-2v-3"/></svg>
+                                                    <span>Add a photo</span>
+                                                    <InputFile OnChange="e => OnStepImageSelected(e, idx)" accept="image/*" />
+                                                </label>
+                                            }
+
+                                            <div class="ed-step-media-fields">
+                                                <div class="field">
+                                                    <span>Photo description</span>
+                                                    <InputText placeholder="Describes the photo, for screen readers" @bind-Value="step.ImageAlt" />
+                                                </div>
+                                                <div class="ed-mini-row">
+                                                    <div class="field ed-minutes-field">
+                                                        <span>Minutes</span>
+                                                        <InputNumber placeholder="e.g. 2" @bind-Value="step.EstimatedMinutes" />
+                                                    </div>
+                                                    <label class="checkbox-inline">
+                                                        <input type="checkbox" @bind="step.IsOptional" />
+                                                        <span>Optional step</span>
+                                                    </label>
+                                                </div>
+                                                <div class="ed-step-foot">
+                                                    @if (!string.IsNullOrWhiteSpace(step.ImageUrl))
+                                                    {
+                                                        <label class="btn-secondary ed-replace-photo">
+                                                            Replace photo
+                                                            <InputFile OnChange="e => OnStepImageSelected(e, idx)" accept="image/*" />
+                                                        </label>
+                                                        <button type="button" class="link-danger" @onclick="() => step.ImageUrl = null">Remove photo</button>
+                                                    }
+                                                    <button type="button" class="link-danger" @onclick="() => RemoveStep(idx)">Remove step</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                            }
+                        </div>
+                        <button type="button" class="ed-addstep" @onclick="AddStep">+ Add step</button>
+                    </div>
+                </section>
+
+            </div>
+
+            <aside class="ed-rail">
+
+                <details class="ed-card" open>
+                    <summary><h3>Publishing</h3><span class="ed-foldcaret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                    <div class="ed-card-body">
+                        <label class="ed-switch-row">
+                            <span>
+                                <span class="ed-switch-lab">Published</span>
+                                <span class="ed-switch-sub">Visible on the helpdesk</span>
+                            </span>
+                            <span class="ed-switch"><input type="checkbox" @bind="model.IsPublished" /><i></i></span>
+                        </label>
+                        <label class="ed-switch-row">
+                            <span>
+                                <span class="ed-switch-lab">Featured</span>
+                                <span class="ed-switch-sub">Pinned on the home page</span>
+                            </span>
+                            <span class="ed-switch"><input type="checkbox" @bind="model.IsFeatured" /><i></i></span>
+                        </label>
+                        <div class="field">
+                            <span>Go live on</span>
+                            <InputDate @bind-Value="model.ScheduledPublishAt" class="date-input" />
+                            <span class="field-hint">Leave empty to publish immediately when "Published" is checked.</span>
+                        </div>
+                        @if (Id is not null)
+                        {
+                            <p class="ed-pub-state">
+                                <span class="ed-dot @(originalIsPublished == true ? "" : "ed-dot-draft")"></span>
+                                @(originalIsPublished == true ? "Published" : "Draft")
+                                @if (lastKnownUpdatedAt is not null)
+                                {
+                                    <text> · saved @lastKnownUpdatedAt.Value.ToLocalTime().ToString("MMM d, HH:mm")</text>
+                                }
+                            </p>
+                        }
+                    </div>
+                </details>
+
+                <details class="ed-card" open>
+                    <summary><h3>Placement</h3><span class="ed-foldcaret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                    <div class="ed-card-body">
+                        <div class="field">
+                            <span>Category</span>
+                            <select @bind="selectedTopCategoryId" @bind:after="OnTopCategoryBindChanged">
+                                @foreach (var category in categories)
+                                {
+                                    <option value="@category.Id">@category.Name</option>
+                                }
+                            </select>
+                        </div>
+
+                        @if (CurrentSubCategories.Count > 0)
+                        {
+                            <div class="field">
+                                <span>Subcategory</span>
+                                <select value="@(model.CategoryId == selectedTopCategoryId ? "" : model.CategoryId.ToString())" @onchange="OnSubCategoryChanged">
+                                    <option value="">General (no subcategory)</option>
+                                    @foreach (var sub in CurrentSubCategories)
+                                    {
+                                        <option value="@sub.Id">@sub.Name</option>
+                                    }
+                                </select>
+                                <span class="field-hint">Keeps this out of the general "@(categories?.FirstOrDefault(c => c.Id == selectedTopCategoryId)?.Name)" list.</span>
+                            </div>
+                        }
+                    </div>
+                </details>
+
+                <details class="ed-card" open>
+                    <summary><h3>Tags</h3><span class="ed-card-hint">@selectedTagIds.Count picked</span><span class="ed-foldcaret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                    <div class="ed-card-body">
+                        <div class="tag-selector">
+                            @foreach (var tag in tags)
+                            {
+                                var isSelected = selectedTagIds.Contains(tag.Id);
+                                <label class="tag-option @(isSelected ? "selected" : "")">
+                                    <input type="checkbox" checked="@isSelected" @onchange="e => ToggleTag(tag.Id, (bool)e.Value!)" />
+                                    <span class="tag-color-dot" style="--swatch-color: @tag.Color; margin-right: 6px;"></span>
+                                    @tag.Name
+                                </label>
+                            }
+                        </div>
+                    </div>
+                </details>
+
+                <details class="ed-card" open>
+                    <summary><h3>Related articles</h3><span class="ed-foldcaret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></summary>
+                    <div class="ed-card-body">
+                        <div class="ed-relmode">
+                            <label class="@(model.RelatedArticlesMode == "manual" ? "on" : "")">
+                                <input type="radio" name="relmode" checked="@(model.RelatedArticlesMode == "manual")" @onchange='() => SetRelatedMode("manual")' />
+                                <span><span class="ed-relmode-t">Choose them myself</span><span class="ed-relmode-d">Only the articles you pick, in your order.</span></span>
+                            </label>
+                            <label class="@(model.RelatedArticlesMode == "auto" ? "on" : "")">
+                                <input type="radio" name="relmode" checked="@(model.RelatedArticlesMode == "auto")" @onchange='() => SetRelatedMode("auto")' />
+                                <span><span class="ed-relmode-t">Pick automatically</span><span class="ed-relmode-d">Top 5 articles sharing this article's tags.</span></span>
+                            </label>
+                        </div>
+
+                        @if (model.RelatedArticlesMode == "manual")
+                        {
+                            <div class="ed-relpicker">
+                                @if (manualRelated.Count == 0)
+                                {
+                                    <p class="ed-rel-empty">Nothing picked yet — search below. Leave it empty and no related-articles section shows on this article.</p>
+                                }
+                                else
+                                {
+                                    <ol class="ed-rel-chosen">
+                                        @for (var i = 0; i < manualRelated.Count; i++)
+                                        {
+                                            var idx = i;
+                                            var a = manualRelated[idx];
+                                            <li @key="a.Id">
+                                                <span class="ed-rel-ord">@(idx + 1)</span>
+                                                <span class="ed-rel-ttl">@a.Title</span>
+                                                <span class="ed-rel-move">
+                                                    <button type="button" class="ed-move-btn" title="Move up" disabled="@(idx == 0)" @onclick="() => MoveRelatedUp(idx)">
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 15l6-6 6 6"/></svg>
+                                                    </button>
+                                                    <button type="button" class="ed-move-btn" title="Move down" disabled="@(idx == manualRelated.Count - 1)" @onclick="() => MoveRelatedDown(idx)">
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                                                    </button>
+                                                </span>
+                                                <button type="button" class="ed-rel-x" title="Remove" @onclick="() => RemoveRelated(a.Id)">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                                                </button>
+                                            </li>
+                                        }
+                                    </ol>
+                                }
+
+                                <div class="ed-rel-search">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+                                    <input type="text" placeholder="Search published articles" value="@relatedSearchTerm" @oninput="OnRelatedSearchInput" />
+                                </div>
+
+                                @if (relatedSearchResults.Count > 0)
+                                {
+                                    <ul class="ed-rel-results">
+                                        @foreach (var a in relatedSearchResults)
+                                        {
+                                            <li @key="a.Id">
+                                                <label>
+                                                    <input type="checkbox" checked="@manualRelated.Any(m => m.Id == a.Id)" @onchange="e => OnRelatedResultToggled(a, (bool)e.Value!)" />
+                                                    <span>
+                                                        <span class="ed-rel-result-t">@a.Title</span><br />
+                                                        <span class="ed-rel-result-m">@(a.Category?.Name ?? "Uncategorized")@(a.IsPublished ? "" : " · Draft")</span>
+                                                    </span>
+                                                </label>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(relatedSearchTerm))
+                                {
+                                    <p class="ed-rel-none">No article matches "@relatedSearchTerm".</p>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ed-relpicker">
+                                @if (selectedTagIds.Count == 0)
+                                {
+                                    <p class="ed-rel-empty">Pick a tag above first — automatic matching is based on shared tags.</p>
+                                }
+                                else if (autoPreview is null)
+                                {
+                                    <p class="ed-rel-empty">Loading preview…</p>
+                                }
+                                else if (autoPreview.Count == 0)
+                                {
+                                    <p class="ed-rel-empty">No other published article shares these tags yet.</p>
+                                }
+                                else
+                                {
+                                    <p class="ed-rel-note">Based on this article's tags, these would show today:</p>
+                                    <div class="ed-rel-auto">
+                                        @for (var i = 0; i < autoPreview.Count; i++)
+                                        {
+                                            <div><span class="ed-step-num ed-step-num-sm">@(i + 1)</span> @autoPreview[i].Title</div>
+                                        }
+                                    </div>
+                                    <p class="ed-rel-note">This list changes automatically as tags or view counts change.</p>
+                                }
+                            </div>
+                        }
+                    </div>
+                </details>
+
+            </aside>
+        </div>
+
+        <div class="ed-mobar">
+            @if (lastAutosaveAt is not null)
+            {
+                <span class="ed-saved"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Saved</span>
+            }
+            <button type="button" class="btn-secondary" @onclick="CancelEdit">Cancel</button>
+            <button type="submit" class="btn-primary" disabled="@IsUploading">Save article</button>
+        </div>
+    </EditForm>
+}
+
+@if (showPreview)
+{
+    <div class="modal-overlay" @onclick="ClosePreview">
+        <div class="modal-content modal-content-wide" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Preview — not saved yet</h3>
+                <button type="button" class="modal-close" @onclick="ClosePreview">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-notice">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    <span>This is how the article will look. Nothing has been saved — close this to keep editing.</span>
+                </div>
+
+                <div class="article-preview">
+                    <p class="crumb">
+                        <span class="crumb-home">Helpdesk</span>
+                        <span class="sep">/</span>
+                        <span class="crumb-category">@PreviewCategoryName</span>
+                        <span class="sep">/</span>
+                        <span class="here">@(string.IsNullOrWhiteSpace(model.Title) ? "(untitled)" : model.Title)</span>
+                    </p>
+
+                    <div class="title-row">
+                        <h1>@(string.IsNullOrWhiteSpace(model.Title) ? "(untitled)" : model.Title)</h1>
+                        <div class="title-meta">
+                            @if (PreviewTagNames.Any())
+                            {
+                                <div class="tags-inline">
+                                    @foreach (var tagName in PreviewTagNames)
+                                    {
+                                        <span class="tag">@tagName</span>
+                                    }
+                                </div>
+                            }
+                            <span class="@(model.IsPublished ? "status-badge published" : "status-badge draft")">@(model.IsPublished ? "Published" : "Draft")</span>
+                        </div>
+                    </div>
+
+                    <p class="lede">@(string.IsNullOrWhiteSpace(model.Summary) ? "(no summary yet)" : model.Summary)</p>
+
+                    @if (!string.IsNullOrWhiteSpace(model.VideoUrl))
+                    {
+                        <div class="demo-block">
+                            <div class="demo-label">Watch: @model.Title</div>
+                            <div class="video-frame">
+                                @if (VideoEmbedHelper.IsUploadedFile(model.VideoUrl))
+                                {
+                                    <video src="@model.VideoUrl" controls class="media-fill"></video>
+                                }
+                                else
+                                {
+                                    <iframe src="@VideoEmbedHelper.ToEmbedUrl(model.VideoUrl)" title="@model.Title" allowfullscreen class="media-fill"></iframe>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @if (steps.Any())
+                    {
+                        <ol class="steps">
+                            @foreach (var step in steps)
+                            {
+                                <li>
+                                    <div class="step-body">
+                                        <h3>@(string.IsNullOrWhiteSpace(step.Title) ? "(untitled step)" : step.Title)</h3>
+                                        @if (step.EstimatedMinutes.HasValue)
+                                        {
+                                            <span class="step-duration">~@step.EstimatedMinutes min read</span>
+                                        }
+                                        @if (step.IsOptional)
+                                        {
+                                            <span class="step-optional">Optional</span>
+                                        }
+                                        <p>@step.Description</p>
+                                        @if (!string.IsNullOrWhiteSpace(step.ImageUrl))
+                                        {
+                                            <div class="step-inline-media"><img src="@step.ImageUrl" alt="@(step.ImageAlt ?? step.Title)" /></div>
+                                        }
+                                    </div>
+                                </li>
+                            }
+                        </ol>
+                    }
+
+                    @if (model.RelatedArticlesMode == "manual" && manualRelated.Count > 0)
+                    {
+                        <section class="related-articles">
+                            <h2>Related Articles</h2>
+                            <div class="related-grid">
+                                @foreach (var related in manualRelated)
+                                {
+                                    <div class="related-card">
+                                        <span class="related-category">@related.Category?.Name</span>
+                                        <h3>@related.Title</h3>
+                                    </div>
+                                }
+                            </div>
+                        </section>
+                    }
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-primary" @onclick="ClosePreview">← Back to editing</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showVersions && versions is not null)
+{
+    <div class="modal-overlay" @onclick="CloseVersions">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Version History</h3>
+                <button type="button" class="modal-close" @onclick="CloseVersions">&times;</button>
+            </div>
+            <div class="modal-body">
+                @foreach (var v in versions)
+                {
+                    <div class="version-item">
+                        <div class="version-info">
+                            <span class="version-number">v@(v.VersionNumber)</span>
+                            <span class="version-title">@v.Title</span>
+                            <span class="version-date">@v.CreatedAt.ToString("MMM d, yyyy HH:mm") by @v.CreatedBy</span>
+                            <span class="version-notes">@v.ChangeNotes</span>
+                        </div>
+                        <button type="button" class="btn-secondary" @onclick="() => RestoreVersion(v.Id)">Restore</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private const long MaxUploadBytes = 200 * 1024 * 1024; // 200 MB
+    private const int MaxImageDimension = 1600; // px, longest side — plenty for a help-article screenshot
+
+    private List<Category>? categories;
+    private int selectedTopCategoryId;
+    private List<Category> CurrentSubCategories =>
+        categories?.FirstOrDefault(c => c.Id == selectedTopCategoryId)?.SubCategories.OrderBy(s => s.SortOrder).ToList() ?? new();
+
+    /// <summary>Figures out which top-level category is selected from model.CategoryId,
+    /// which may itself already be a subcategory (when editing an existing article).</summary>
+    private void SyncSelectedTopCategory()
+    {
+        if (categories is null) return;
+        var match = categories.FirstOrDefault(c => c.Id == model.CategoryId)
+                 ?? categories.SelectMany(c => c.SubCategories).FirstOrDefault(c => c.Id == model.CategoryId);
+        selectedTopCategoryId = match?.ParentCategoryId ?? match?.Id ?? model.CategoryId;
+    }
+
+    private void OnTopCategoryBindChanged()
+    {
+        model.CategoryId = selectedTopCategoryId;
+        StateHasChanged();
+    }
+
+    private void OnSubCategoryChanged(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        model.CategoryId = string.IsNullOrEmpty(raw) ? selectedTopCategoryId : int.Parse(raw);
+    }
+
+    private List<Tag>? tags;
+    private ArticleFormModel model = new();
+    private List<ArticleStep> steps = new();
+
+    // Parallel to `steps` (same length/order) — a client-only identity used purely so
+    // <details open> state survives a step being moved, without needing Article.Id
+    // (a brand-new step doesn't have one yet). openStepKeys tracks which steps the
+    // user has expanded; membership is what drives the "open" attribute, so a step
+    // keeps its open/closed state when it moves, and a re-render triggered by
+    // something unrelated (autosave, typing elsewhere) never snaps it shut.
+    private List<Guid> stepKeys = new();
+    private HashSet<Guid> openStepKeys = new();
+
+    private bool articleVideoUploading;
+    private HashSet<int> stepUploading = new();
+    private string? uploadError;
+    private bool IsUploading => articleVideoUploading || stepUploading.Count > 0;
+    private List<int> selectedTagIds = new();
+    private bool showVersions;
+    private List<ArticleVersion>? versions;
+    private bool showPreview;
+
+    private int? TotalStepMinutes
+    {
+        get
+        {
+            var minutes = steps.Where(s => s.EstimatedMinutes is not null).Sum(s => s.EstimatedMinutes!.Value);
+            return minutes > 0 ? minutes : null;
+        }
+    }
+
+    // ---- related articles ----
+    private List<Article> manualRelated = new();
+    private string relatedSearchTerm = "";
+    private List<Article> relatedSearchResults = new();
+    private int relatedSearchSeq; // guards against a slow keystroke's results landing after a faster later one
+    private List<Article>? autoPreview;
+
+    private bool? originalIsPublished; // null = brand-new, never-saved article
+    private int? autosavedId;
+    private DateTime? lastAutosaveAt;
+    private bool showValidationBanner;
+
+    private DateTime? lastKnownUpdatedAt;
+    private bool concurrentEditDetected;
+    private CancellationTokenSource? _autosaveCts;
+    private string _currentUsername = "admin";
+
+    private Article? originalSnapshot;
+    private List<ArticleStep> originalSteps = new();
+    private List<int> originalTagIds = new();
+
+    private bool _explicitExit;
+
+    private string PreviewCategoryName =>
+        (categories?.FirstOrDefault(c => c.Id == model.CategoryId)
+         ?? categories?.SelectMany(c => c.SubCategories).FirstOrDefault(c => c.Id == model.CategoryId))?.Name
+        ?? "(no category)";
+    private List<string> PreviewTagNames => tags?.Where(t => selectedTagIds.Contains(t.Id)).Select(t => t.Name).ToList() ?? new();
+
+    private void OpenPreview() => showPreview = true;
+    private void ClosePreview() => showPreview = false;
+
+    private string FormatAutosaveTime()
+    {
+        if (lastAutosaveAt is null) return "";
+        var seconds = (int)(DateTime.Now - lastAutosaveAt.Value).TotalSeconds;
+        return seconds < 5 ? "just now" : $"{seconds}s ago";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name;
+        _currentUsername = username ?? "admin";
+        var role = await UserService.GetUserRoleAsync(username);
+        if (!await PermissionService.IsAllowedAsync(role, Permissions.ArticlesManage))
+        {
+            Nav.NavigateTo("/admin/articles");
+            return;
+        }
+
+        categories = await ArticleService.GetCategoriesAsync(true);
+        tags = await ArticleService.GetAllTagsAsync();
+
+        if (Id is not null)
+        {
+            await LoadArticle();
+        }
+        else if (categories.Any())
+        {
+            model.CategoryId = categories.First().Id;
+            SyncSelectedTopCategory();
+        }
+
+        if (steps.Count == 0)
+        {
+            AddStep();
+        }
+
+        StartAutosaveLoop();
+    }
+
+    private void OnInvalidSubmit(EditContext context)
+    {
+        showValidationBanner = true;
+    }
+
+    private void AddStep()
+    {
+        steps.Add(new ArticleStep());
+        var key = Guid.NewGuid();
+        stepKeys.Add(key);
+        openStepKeys.Add(key); // a freshly added step is the one you're about to fill in
+    }
+
+    private void RemoveStep(int index)
+    {
+        steps.RemoveAt(index);
+        var key = stepKeys[index];
+        stepKeys.RemoveAt(index);
+        openStepKeys.Remove(key);
+    }
+
+    private void MoveStepUp(int index)
+    {
+        if (index <= 0) return;
+        (steps[index - 1], steps[index]) = (steps[index], steps[index - 1]);
+        (stepKeys[index - 1], stepKeys[index]) = (stepKeys[index], stepKeys[index - 1]);
+    }
+
+    private void MoveStepDown(int index)
+    {
+        if (index >= steps.Count - 1) return;
+        (steps[index + 1], steps[index]) = (steps[index], steps[index + 1]);
+        (stepKeys[index + 1], stepKeys[index]) = (stepKeys[index], stepKeys[index + 1]);
+    }
+
+    private void ToggleTag(int tagId, bool isSelected)
+    {
+        if (isSelected) selectedTagIds.Add(tagId);
+        else selectedTagIds.Remove(tagId);
+
+        if (model.RelatedArticlesMode == "auto")
+        {
+            _ = RefreshAutoPreview();
+        }
+    }
+
+    // ---- related articles: mode switch, search, pick, reorder ----
+
+    private void SetRelatedMode(string mode)
+    {
+        model.RelatedArticlesMode = mode;
+        if (mode == "auto" && autoPreview is null)
+        {
+            _ = RefreshAutoPreview();
+        }
+    }
+
+    private async Task RefreshAutoPreview()
+    {
+        autoPreview = null; // shows "Loading preview…" while this runs
+        StateHasChanged();
+        var excludeId = Id ?? autosavedId ?? 0;
+        autoPreview = await ArticleService.PreviewAutoRelatedArticlesAsync(excludeId, selectedTagIds);
+        StateHasChanged();
+    }
+
+    private async Task OnRelatedSearchInput(ChangeEventArgs e)
+    {
+        relatedSearchTerm = e.Value?.ToString() ?? "";
+        var mySeq = ++relatedSearchSeq;
+
+        var results = await ArticleService.SearchArticlesForRelatingAsync(Id ?? autosavedId, relatedSearchTerm);
+
+        if (mySeq != relatedSearchSeq) return; // a newer keystroke already started a fresher search
+        relatedSearchResults = results;
+    }
+
+    private void OnRelatedResultToggled(Article article, bool selected)
+    {
+        if (selected)
+        {
+            if (!manualRelated.Any(m => m.Id == article.Id))
+                manualRelated.Add(article);
+        }
+        else
+        {
+            manualRelated.RemoveAll(m => m.Id == article.Id);
+        }
+    }
+
+    private void RemoveRelated(int articleId) => manualRelated.RemoveAll(m => m.Id == articleId);
+
+    private void MoveRelatedUp(int index)
+    {
+        if (index <= 0) return;
+        (manualRelated[index - 1], manualRelated[index]) = (manualRelated[index], manualRelated[index - 1]);
+    }
+
+    private void MoveRelatedDown(int index)
+    {
+        if (index >= manualRelated.Count - 1) return;
+        (manualRelated[index + 1], manualRelated[index]) = (manualRelated[index], manualRelated[index + 1]);
+    }
+
+    private async Task OnArticleVideoSelected(InputFileChangeEventArgs e)
+    {
+        uploadError = null;
+        var file = e.File;
+        try
+        {
+            // Read the browser file into memory BEFORE flipping any state that
+            // triggers a re-render. See the comment in OnStepImageSelected below
+            // for why this ordering matters.
+            using var buffered = new MemoryStream();
+            await using (var readStream = file.OpenReadStream(MaxUploadBytes))
+            {
+                await readStream.CopyToAsync(buffered);
+            }
+            buffered.Position = 0;
+
+            articleVideoUploading = true;
+            StateHasChanged();
+
+            model.VideoUrl = await SaveUploadAsync(buffered, file.ContentType, file.Name, "articles");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A rejected file type — expected, actionable, and safe to show verbatim.
+            uploadError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Article video upload failed for {FileName} ({ContentType}, {Size} bytes).",
+                file.Name, file.ContentType, file.Size);
+            uploadError = $"\"{file.Name}\" couldn't be uploaded. Try a different file, or check the server log for details.";
+        }
+        finally
+        {
+            articleVideoUploading = false;
+        }
+    }
+
+    private async Task OnStepImageSelected(InputFileChangeEventArgs e, int index)
+    {
+        uploadError = null;
+        var file = e.File;
+        try
+        {
+            // Read the browser file into memory BEFORE calling StateHasChanged().
+            // The "Add a photo" markup swaps its <InputFile> out for an "Uploading…"
+            // span as soon as stepUploading.Contains(idx) is true, which unmounts
+            // the InputFile and clears the browser-side file reference Blazor needs
+            // to service OpenReadStream(). Read the bytes first, while the input is
+            // still mounted, and only then flip the uploading flag/state.
+            using var buffered = new MemoryStream();
+            await using (var readStream = file.OpenReadStream(MaxUploadBytes))
+            {
+                await readStream.CopyToAsync(buffered);
+            }
+            buffered.Position = 0;
+
+            stepUploading.Add(index);
+            StateHasChanged();
+
+            steps[index].ImageUrl = await SaveUploadAsync(buffered, file.ContentType, file.Name, "steps");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A rejected file type — expected, actionable, and safe to show verbatim.
+            uploadError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Step photo upload failed for step {Index}, file {FileName} ({ContentType}, {Size} bytes).",
+                index, file.Name, file.ContentType, file.Size);
+            uploadError = $"\"{file.Name}\" couldn't be uploaded. Try a different file, or check the server log for details.";
+        }
+        finally
+        {
+            stepUploading.Remove(index);
+        }
+    }
+
+    /// <summary>Saves an already-buffered upload. Images are downsized and re-encoded as WebP
+    /// first (see SaveCompressedImageAsync) — the actual fix for step photos taking a long time
+    /// to load, since the raw phone/screenshot files people upload are routinely 1-2 MB+.
+    /// Video is saved as-is; re-encoding video server-side isn't worth the CPU/complexity here.
+    /// Takes a buffered MemoryStream rather than IBrowserFile because by the time this runs the
+    /// UI may already have re-rendered (upload spinner, etc.) and the browser-side file the
+    /// IBrowserFile points at can no longer be read — see the callers for details.</summary>
+    /// <summary>Extensions a non-image upload (currently: article "video") is allowed to be
+    /// saved with. Without this whitelist, the only server-side check was "is the browser's
+    /// reported content-type an image?" — anything else (including a mislabeled or malicious
+    /// file with a .html, .js, .aspx, .exe, etc. name) was written straight into wwwroot/uploads
+    /// under whatever extension the original filename had, and served back out as a static file.
+    /// This is admin-only (requires Articles.Manage), so the risk is a compromised/malicious
+    /// editor account rather than an anonymous visitor, but it costs nothing to close it off.</summary>
+    private static readonly HashSet<string> AllowedVideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".webm", ".ogg", ".ogv", ".mov", ".m4v"
+    };
+
+    private async Task<string> SaveUploadAsync(MemoryStream buffered, string contentType, string originalFileName, string subfolder)
+    {
+        var folder = Path.Combine(Env.WebRootPath, "uploads", subfolder);
+        Directory.CreateDirectory(folder);
+
+        if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return await SaveCompressedImageAsync(buffered, originalFileName, folder, subfolder);
+        }
+
+        var extension = Path.GetExtension(originalFileName);
+        var isVideoContentType = contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
+        var isVideoExtension = !string.IsNullOrEmpty(extension) && AllowedVideoExtensions.Contains(extension);
+        if (!isVideoContentType && !isVideoExtension)
+        {
+            throw new InvalidOperationException(
+                $"\"{originalFileName}\" isn't a supported image or video file (content-type: \"{contentType}\"). " +
+                "Only image and video files can be uploaded here.");
+        }
+
+        // Normalize to a known-safe extension even when only the content-type matched,
+        // so a file can never be written out with an arbitrary/dangerous extension.
+        var safeExtension = isVideoExtension ? extension : ".mp4";
+        var fileName = $"{Guid.NewGuid()}{safeExtension}";
+        var fullPath = Path.Combine(folder, fileName);
+
+        await using var writeStream = new FileStream(fullPath, FileMode.Create);
+        await buffered.CopyToAsync(writeStream);
+
+        return $"/uploads/{subfolder}/{fileName}";
+    }
+
+    private async Task<string> SaveCompressedImageAsync(MemoryStream buffered, string originalFileName, string folder, string subfolder)
+    {
+        using var original = SkiaSharp.SKBitmap.Decode(buffered);
+
+        if (original is null)
+        {
+            buffered.Position = 0;
+            var fallbackName = $"{Guid.NewGuid()}{Path.GetExtension(originalFileName)}";
+            await using var fallbackWrite = new FileStream(Path.Combine(folder, fallbackName), FileMode.Create);
+            await buffered.CopyToAsync(fallbackWrite);
+            return $"/uploads/{subfolder}/{fallbackName}";
+        }
+
+        var longestSide = Math.Max(original.Width, original.Height);
+        var scale = longestSide > MaxImageDimension ? (double)MaxImageDimension / longestSide : 1.0;
+
+        SkiaSharp.SKBitmap toEncode = original;
+        SkiaSharp.SKBitmap? resized = null;
+        if (scale < 1.0)
+        {
+            var newInfo = new SkiaSharp.SKImageInfo(
+                Math.Max(1, (int)Math.Round(original.Width * scale)),
+                Math.Max(1, (int)Math.Round(original.Height * scale)));
+            resized = original.Resize(newInfo, SkiaSharp.SKFilterQuality.High);
+            if (resized is not null) toEncode = resized;
+        }
+
+        try
+        {
+            using var image = SkiaSharp.SKImage.FromBitmap(toEncode);
+            using var encodedData = image.Encode(SkiaSharp.SKEncodedImageFormat.Webp, 82);
+
+            var fileName = $"{Guid.NewGuid()}.webp";
+            var fullPath = Path.Combine(folder, fileName);
+            await using var writeStream = new FileStream(fullPath, FileMode.Create);
+            encodedData.SaveTo(writeStream);
+
+            return $"/uploads/{subfolder}/{fileName}";
+        }
+        finally
+        {
+            resized?.Dispose();
+        }
+    }
+
+    private async Task Save()
+    {
+        showValidationBanner = false;
+
+        if (IsUploading)
+        {
+            uploadError = "Still uploading a photo — please wait for it to finish before saving.";
+            return;
+        }
+
+        if (model.CategoryId == 0 && categories?.Any() == true)
+        {
+            model.CategoryId = categories.First().Id;
+            selectedTopCategoryId = model.CategoryId;
+        }
+
+        if (model.CategoryId == 0)
+        {
+            uploadError = "Please select a category before saving.";
+            return;
+        }
+
+        _autosaveCts?.Cancel();
+        _explicitExit = true;
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+
+        var targetId = Id ?? autosavedId;
+
+        var article = new Article
+        {
+            Id = targetId ?? 0,
+            Title = model.Title,
+            Slug = string.IsNullOrWhiteSpace(model.Slug) ? GenerateSlug(model.Title) : model.Slug,
+            Summary = model.Summary,
+            VideoUrl = string.IsNullOrWhiteSpace(model.VideoUrl) ? null : model.VideoUrl,
+            CategoryId = model.CategoryId,
+            MetaTitle = model.MetaTitle,
+            MetaDescription = model.MetaDescription,
+            IsPublished = model.IsPublished,
+            IsFeatured = model.IsFeatured,
+            ScheduledPublishAt = model.ScheduledPublishAt
+        };
+
+        int savedId;
+        if (targetId is null)
+        {
+            var created = await ArticleService.CreateArticleAsync(article, username);
+            savedId = created.Id;
+            await ArticleService.UpdateArticleAsync(created, steps, username);
+            await ArticleService.SetArticleTagsAsync(created.Id, selectedTagIds, username);
+        }
+        else
+        {
+            article.Id = targetId.Value;
+            savedId = targetId.Value;
+            await ArticleService.UpdateArticleAsync(article, steps, username);
+            await ArticleService.SetArticleTagsAsync(article.Id, selectedTagIds, username);
+        }
+
+        await ArticleService.SetRelatedArticlesAsync(
+            savedId, model.RelatedArticlesMode, manualRelated.Select(a => a.Id).ToList(), username);
+
+        Nav.NavigateTo("/admin/articles");
+    }
+
+    /// <summary>Runs in the background for as long as this editor page is open.
+    /// Every 20s, silently persists the current form as a safety-net draft, so
+    /// accidentally closing the browser (or a crash, or a dropped connection)
+    /// loses at most ~20 seconds of work instead of everything.
+    ///
+    /// This never publishes or unpublishes anything on its own: a brand-new
+    /// article is autosaved as a Draft (IsPublished = false) regardless of what
+    /// the checkbox currently shows, since it never existed before this editing
+    /// session; an already-existing article keeps whatever published state it
+    /// had when this page loaded (originalIsPublished), so a live article never
+    /// flickers offline just because someone is mid-edit. Only clicking
+    /// "Save article" actually applies the Published checkbox.</summary>
+    private void StartAutosaveLoop()
+    {
+        _autosaveCts = new CancellationTokenSource();
+        var token = _autosaveCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(20));
+                while (await timer.WaitForNextTickAsync(token))
+                {
+                    await InvokeAsync(AutosaveAsync);
+                }
+            }
+            catch (OperationCanceledException) { /* page closed or explicit Save happened */ }
+        }, token);
+    }
+
+    private async Task AutosaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(model.Title)) return; // nothing worth saving yet
+
+        try
+        {
+            var targetId = Id ?? autosavedId;
+
+            var article = new Article
+            {
+                Id = targetId ?? 0,
+                Title = model.Title,
+                Slug = string.IsNullOrWhiteSpace(model.Slug) ? GenerateSlug(model.Title) : model.Slug,
+                Summary = model.Summary,
+                VideoUrl = string.IsNullOrWhiteSpace(model.VideoUrl) ? null : model.VideoUrl,
+                CategoryId = model.CategoryId,
+                MetaTitle = model.MetaTitle,
+                MetaDescription = model.MetaDescription,
+                IsPublished = originalIsPublished ?? false,
+                IsFeatured = model.IsFeatured,
+                ScheduledPublishAt = model.ScheduledPublishAt
+            };
+
+            int savedId;
+            if (targetId is null)
+            {
+                var created = await ArticleService.CreateArticleAsync(article, _currentUsername);
+                autosavedId = created.Id;
+                savedId = created.Id;
+                lastKnownUpdatedAt = await ArticleService.UpdateArticleAsync(created, steps, _currentUsername, "Autosaved draft");
+                await ArticleService.SetArticleTagsAsync(created.Id, selectedTagIds, _currentUsername);
+            }
+            else
+            {
+                article.Id = targetId.Value;
+                savedId = targetId.Value;
+                var writtenAt = await ArticleService.UpdateArticleAsync(
+                    article, steps, _currentUsername, "Autosaved draft", lastKnownUpdatedAt);
+
+                if (writtenAt is null)
+                {
+                    concurrentEditDetected = true;
+                    _autosaveCts?.Cancel();
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                lastKnownUpdatedAt = writtenAt;
+                await ArticleService.SetArticleTagsAsync(article.Id, selectedTagIds, _currentUsername);
+            }
+
+            await ArticleService.SetRelatedArticlesAsync(
+                savedId, model.RelatedArticlesMode, manualRelated.Select(a => a.Id).ToList(), _currentUsername);
+
+            lastAutosaveAt = DateTime.Now;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // Best-effort background save — a transient DB hiccup shouldn't
+            // interrupt someone who's actively typing.
+        }
+    }
+
+    /// <summary>Cancel button: discards whatever the background autosave already wrote
+    /// to the database this session, then leaves. An existing article reverts to the
+    /// exact snapshot it had when the editor opened; a brand-new article that only
+    /// ever existed as an autosaved draft is sent to the Recycle Bin, since there's
+    /// no "original" to go back to.</summary>
+    private async Task CancelEdit()
+    {
+        _autosaveCts?.Cancel();
+        _explicitExit = true;
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+
+        if (Id is not null && originalSnapshot is not null)
+        {
+            await ArticleService.RevertArticleAsync(originalSnapshot, originalSteps, originalTagIds, username);
+        }
+        else if (Id is null && autosavedId is not null)
+        {
+            await ArticleService.DeleteArticleAsync(autosavedId.Value, username);
+        }
+
+        Nav.NavigateTo("/admin/articles");
+    }
+
+    public void Dispose()
+    {
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+
+        if (!_explicitExit)
+        {
+            FlushAndDraftOnAbandon();
+        }
+    }
+
+    /// <summary>Last-chance save when the editor is torn down without Save or Cancel.
+    ///
+    /// The autosave loop only runs every 20 seconds, so on its own it loses everything
+    /// typed since the last tick — and since steps are usually the last thing anyone
+    /// fills in, "the steps are gone" was the normal outcome of closing the browser
+    /// mid-edit. This flushes the current form first, and only then drops the article
+    /// to Draft.</summary>
+    private void FlushAndDraftOnAbandon()
+    {
+        var targetId = Id ?? autosavedId;
+
+        if (targetId is null && string.IsNullOrWhiteSpace(model.Title))
+            return;
+
+        var article = new Article
+        {
+            Id = targetId ?? 0,
+            Title = model.Title,
+            Slug = string.IsNullOrWhiteSpace(model.Slug) ? GenerateSlug(model.Title) : model.Slug,
+            Summary = model.Summary,
+            VideoUrl = string.IsNullOrWhiteSpace(model.VideoUrl) ? null : model.VideoUrl,
+            CategoryId = model.CategoryId,
+            MetaTitle = model.MetaTitle,
+            MetaDescription = model.MetaDescription,
+            IsPublished = originalIsPublished ?? false,
+            IsFeatured = model.IsFeatured,
+            ScheduledPublishAt = model.ScheduledPublishAt
+        };
+
+        var stepsCopy = steps.Select(s => new ArticleStep
+        {
+            Title = s.Title,
+            Description = s.Description,
+            ImageUrl = s.ImageUrl,
+            VideoUrl = s.VideoUrl,
+            ImageAlt = s.ImageAlt,
+            EstimatedMinutes = s.EstimatedMinutes,
+            IsOptional = s.IsOptional
+        }).ToList();
+
+        var tagIds = new List<int>(selectedTagIds);
+        var relatedIds = manualRelated.Select(a => a.Id).ToList();
+        var relatedMode = model.RelatedArticlesMode;
+        var expectedUpdatedAt = lastKnownUpdatedAt;
+        var staleSession = concurrentEditDetected;
+
+        var service = ArticleService;
+        var username = _currentUsername;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (staleSession)
+                {
+                    return;
+                }
+
+                if (article.Id == 0)
+                {
+                    var created = await service.CreateArticleAsync(article, username);
+                    await service.UpdateArticleAsync(created, stepsCopy, username,
+                        "Autosaved — editor closed without Save");
+                    await service.SetArticleTagsAsync(created.Id, tagIds, username);
+                    await service.SetRelatedArticlesAsync(created.Id, relatedMode, relatedIds, username);
+                    return;
+                }
+
+                var writtenAt = await service.UpdateArticleAsync(article, stepsCopy, username,
+                    "Autosaved — editor closed without Save", expectedUpdatedAt);
+
+                if (writtenAt is null)
+                    return;
+
+                await service.SetArticleTagsAsync(article.Id, tagIds, username);
+                await service.SetRelatedArticlesAsync(article.Id, relatedMode, relatedIds, username);
+                await service.SetPublishedStateAsync(article.Id, false, username,
+                    "Auto-unpublished — editor closed without Save");
+            }
+            catch
+            {
+                // Best-effort safety net; nothing left to report errors to.
+            }
+        });
+    }
+
+    private async Task ShowVersions()
+    {
+        if (Id is not null)
+        {
+            versions = await ArticleService.GetArticleVersionsAsync(Id.Value);
+            showVersions = true;
+        }
+    }
+
+    private void CloseVersions()
+    {
+        showVersions = false;
+        versions = null;
+    }
+
+    private async Task RestoreVersion(int versionId)
+    {
+        if (Id is not null)
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "admin";
+            await ArticleService.RestoreArticleVersionAsync(Id.Value, versionId, username);
+            CloseVersions();
+            await LoadArticle();
+        }
+    }
+
+    private async Task LoadArticle()
+    {
+        if (Id is not null)
+        {
+            var existing = await ArticleService.GetArticleAsync(Id.Value);
+            if (existing is not null)
+            {
+                categories ??= await ArticleService.GetCategoriesAsync(true);
+
+                model = new ArticleFormModel
+                {
+                    Title = existing.Title,
+                    Slug = existing.Slug,
+                    Summary = existing.Summary,
+                    VideoUrl = existing.VideoUrl ?? "",
+                    CategoryId = existing.CategoryId,
+                    MetaTitle = existing.MetaTitle,
+                    MetaDescription = existing.MetaDescription,
+                    IsPublished = existing.IsPublished,
+                    IsFeatured = existing.IsFeatured,
+                    ScheduledPublishAt = existing.ScheduledPublishAt,
+                    RelatedArticlesMode = existing.RelatedArticlesMode
+                };
+                originalIsPublished = existing.IsPublished;
+                lastKnownUpdatedAt = existing.UpdatedAt;
+
+                steps = existing.Steps
+                    .OrderBy(s => s.SortOrder)
+                    .Select(s => new ArticleStep
+                    {
+                        Title = s.Title,
+                        Description = s.Description,
+                        ImageUrl = s.ImageUrl,
+                        VideoUrl = s.VideoUrl,
+                        ImageAlt = s.ImageAlt,
+                        EstimatedMinutes = s.EstimatedMinutes,
+                        IsOptional = s.IsOptional
+                    })
+                    .ToList();
+                stepKeys = steps.Select(_ => Guid.NewGuid()).ToList();
+                // Loaded steps start collapsed, except when there's only one — nothing
+                // to scan past, so open it straight away.
+                openStepKeys = steps.Count == 1 && stepKeys.Count > 0
+                    ? new HashSet<Guid> { stepKeys[0] }
+                    : new HashSet<Guid>();
+
+                selectedTagIds = existing.ArticleTags?.Select(at => at.TagId).ToList() ?? new();
+
+                manualRelated = await ArticleService.GetManualRelatedArticlesAsync(Id.Value);
+                if (model.RelatedArticlesMode == "auto")
+                {
+                    await RefreshAutoPreview();
+                }
+
+                originalSnapshot = new Article
+                {
+                    Id = existing.Id,
+                    Title = existing.Title,
+                    Slug = existing.Slug,
+                    Summary = existing.Summary,
+                    VideoUrl = existing.VideoUrl,
+                    CategoryId = existing.CategoryId,
+                    MetaTitle = existing.MetaTitle,
+                    MetaDescription = existing.MetaDescription,
+                    IsPublished = existing.IsPublished,
+                    IsFeatured = existing.IsFeatured,
+                    ScheduledPublishAt = existing.ScheduledPublishAt
+                };
+                originalSteps = steps.Select(s => new ArticleStep
+                {
+                    Title = s.Title,
+                    Description = s.Description,
+                    ImageUrl = s.ImageUrl,
+                    VideoUrl = s.VideoUrl,
+                    ImageAlt = s.ImageAlt,
+                    EstimatedMinutes = s.EstimatedMinutes,
+                    IsOptional = s.IsOptional
+                }).ToList();
+                originalTagIds = new List<int>(selectedTagIds);
+
+                SyncSelectedTopCategory();
+            }
+        }
+    }
+
+    private static string GenerateSlug(string title)
+    {
+        var slug = title.ToLowerInvariant()
+            .Replace(" ", "-")
+            .Replace("&", "and")
+            .Replace("/", "-");
+
+        slug = System.Text.RegularExpressions.Regex.Replace(slug, @"[^a-z0-9\-]", "");
+        slug = System.Text.RegularExpressions.Regex.Replace(slug, @"-+", "-");
+        return slug.Trim('-');
+    }
+
+    private class ArticleFormModel
+    {
+        [Required(ErrorMessage = "Please enter a title for this article.")]
+        public string Title { get; set; } = "";
+        public string Slug { get; set; } = "";
+        [Required(ErrorMessage = "Please write a short summary — it's what people see in the article list and in search results.")]
+        public string Summary { get; set; } = "";
+        public string VideoUrl { get; set; } = "";
+        public string? MetaTitle { get; set; }
+        public string? MetaDescription { get; set; }
+        public int CategoryId { get; set; }
+        public bool IsPublished { get; set; } = false;
+        public bool IsFeatured { get; set; }
+        public DateTime? ScheduledPublishAt { get; set; }
+        public string RelatedArticlesMode { get; set; } = "auto";
+    }
+}

@@ -1,0 +1,129 @@
+@inherits LayoutComponentBase
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+
+<div class="admin-shell">
+    <header class="admin-topbar">
+        <a class="logo" href="/admin/articles">
+            <span class="logo-mark" aria-hidden="true"></span>
+            Helpdesk Admin
+        </a>
+        <div class="admin-topbar-right">
+            @if (!string.IsNullOrWhiteSpace(username))
+            {
+                <div class="admin-user-info" title="Logged in as @username (@role)">
+                    <span class="admin-user-name">@username</span>
+                    <span class="role-pill @GetRolePillClass(role)">@GetRolePillLabel(role)</span>
+                </div>
+            }
+            <ThemeToggle />
+            <a class="admin-exit" href="/helpdesk">← Helpdesk</a>
+            <form method="post" action="/api/admin/logout" data-enhance-nav="false">
+                <button type="submit" class="admin-logout">Log out</button>
+            </form>
+        </div>
+    </header>
+
+    <nav class="admin-nav">
+        <NavLink href="/admin" Match="NavLinkMatch.All">Dashboard</NavLink>
+        <NavLink href="/admin/articles" Match="NavLinkMatch.Prefix">Articles</NavLink>
+        <NavLink href="/admin/categories" Match="NavLinkMatch.Prefix">Categories</NavLink>
+        <NavLink href="/admin/tags" Match="NavLinkMatch.Prefix">Tags</NavLink>
+        <NavLink href="/admin/feedback" Match="NavLinkMatch.Prefix">Feedback</NavLink>
+        @if (CanManageUsers)
+        {
+            <NavLink href="/admin/users" Match="NavLinkMatch.Prefix">Admins</NavLink>
+        }
+        @if (CanViewAudit)
+        {
+            <NavLink href="/admin/audit" Match="NavLinkMatch.Prefix">Audit Log</NavLink>
+        }
+        @if (CanManageSettings)
+        {
+            <NavLink href="/admin/settings" Match="NavLinkMatch.Prefix">Site Settings</NavLink>
+        }
+        @if (role == "SuperAdmin")
+        {
+            <NavLink href="/admin/roles" Match="NavLinkMatch.Prefix">Roles &amp; Access</NavLink>
+        }
+        @if (CanUseRecycleBin)
+        {
+            <NavLink href="/admin/recycle-bin" Match="NavLinkMatch.Prefix">Recycle Bin</NavLink>
+        }
+    </nav>
+
+    <main class="admin-main">
+        <ErrorBoundary @ref="errorBoundary">
+            <ChildContent>
+                @Body
+            </ChildContent>
+            <ErrorContent Context="ex">
+                <div class="role-info-banner viewer" style="margin-bottom:1.5rem;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <span>
+                        Something went wrong loading this page. It's been logged; the rest of the admin
+                        panel is unaffected — you can keep working from the menu above.
+                        <button type="button" class="link-muted" style="margin-left:.5rem;" @onclick="RecoverFromError">Try again</button>
+                    </span>
+                </div>
+            </ErrorContent>
+        </ErrorBoundary>
+    </main>
+</div>
+
+<ConfirmDialog />
+
+@code {
+    private string? username;
+    private string role = "Viewer";
+    private bool CanManageUsers;
+    private bool CanViewAudit;
+    private bool CanManageSettings;
+    private bool CanUseRecycleBin;
+    private ErrorBoundary? errorBoundary;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        username = user.Identity?.Name;
+        role = await UserService.GetUserRoleAsync(username);
+        CanManageUsers = await PermissionService.IsAllowedAsync(role, Permissions.UsersManage);
+        CanViewAudit = await PermissionService.IsAllowedAsync(role, Permissions.AuditLogView);
+        CanManageSettings = await PermissionService.IsAllowedAsync(role, Permissions.SettingsManage);
+        CanUseRecycleBin = await PermissionService.IsAllowedAsync(role, Permissions.CategoriesManage)
+            || await PermissionService.IsAllowedAsync(role, Permissions.TagsManage)
+            || await PermissionService.IsAllowedAsync(role, Permissions.ArticlesManage)
+            || role == "SuperAdmin";
+    }
+
+    // Navigating between admin pages doesn't recreate AdminLayout (it's the shared
+    // layout), so a boundary tripped on one page would otherwise stay tripped forever
+    // — Recover() resets it, and OnParametersSet re-arms it on every navigation too.
+    protected override void OnParametersSet() => errorBoundary?.Recover();
+
+    private void RecoverFromError() => errorBoundary?.Recover();
+
+    private string GetRolePillClass(string r) => r switch
+    {
+        "SuperAdmin" => "superadmin",
+        "Admin" => "admin",
+        "Editor" => "editor",
+        "Viewer" => "viewer",
+        _ => "viewer"
+    };
+
+    private string GetRolePillLabel(string r) => r switch
+    {
+        "SuperAdmin" => "Super Admin",
+        "Admin" => "Admin",
+        "Editor" => "Editor",
+        "Viewer" => "Read-Only Viewer",
+        _ => r
+    };
+}

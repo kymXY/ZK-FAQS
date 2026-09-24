@@ -1,0 +1,230 @@
+@page "/admin/audit"
+@page "/admin/audit-log"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<h1>Audit Log</h1>
+<p class="admin-users-sub">Track all changes made in the admin panel.</p>
+
+@if (!canViewAudit)
+{
+    <div class="role-info-banner viewer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>Access restricted: Administrator role required to view the audit log. Redirecting...</span>
+    </div>
+}
+else if (auditLogs is null)
+{
+    <p>Loading…</p>
+}
+else if (!auditLogs.Any())
+{
+    <p class="empty-state">No audit entries yet.</p>
+}
+else
+{
+    <div class="audit-filters">
+        <select class="filter-select" @bind="selectedEntityType" @bind:after="LoadLogs">
+            <option value="">All Entity Types</option>
+            <option value="Article">Article</option>
+            <option value="Category">Category</option>
+            <option value="User">User</option>
+            <option value="Tag">Tag</option>
+            <option value="Feedback">Feedback</option>
+        </select>
+        <select class="filter-select" @bind="selectedAction" @bind:after="LoadLogs">
+            <option value="">All Actions</option>
+            <option value="Created">Created</option>
+            <option value="Updated">Updated</option>
+            <option value="Deleted">Deleted</option>
+            <option value="Published">Published</option>
+            <option value="Unpublished">Unpublished</option>
+            <option value="Login">Login</option>
+            <option value="Logout">Logout</option>
+            <option value="PasswordChanged">Password Changed</option>
+            <option value="Restored">Restored</option>
+        </select>
+        <input type="text" placeholder="Search username..." @bind="searchUsername" @bind:event="oninput" @bind:after="LoadLogs" class="filter-input" />
+    </div>
+
+    <div class="table-scroll">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Entity</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var log in auditLogs)
+            {
+                <tr>
+                    <td>@log.Timestamp.ToString("MMM d, yyyy HH:mm:ss")</td>
+                    <td>@log.Username</td>
+                    <td>
+                        <span class="action-badge @GetActionClass(log.Action)">@log.Action</span>
+                    </td>
+                    <td>
+                        @log.EntityType @if (log.EntityId > 0) { <span class="count">#@log.EntityId</span> }
+                    </td>
+                    <td>
+                        <strong>@log.EntityName</strong>
+                        @if (!string.IsNullOrWhiteSpace(log.ChangesJson))
+                        {
+                            <button type="button" class="link-muted" @onclick="() => ShowChanges(log.ChangesJson)">View changes</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+
+    <div class="pagination">
+        <button class="btn-secondary" @onclick="LoadPrevious" disabled="@(!hasPrevious)">Previous</button>
+        <span class="page-info">Page @currentPage</span>
+        <button class="btn-secondary" @onclick="LoadNext" disabled="@(!hasNext)">Next</button>
+    </div>
+}
+
+@if (showChangesModal)
+{
+    <div class="modal-overlay" @onclick="CloseChangesModal">
+        <div class="modal-content modal-content-wide" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Changes</h3>
+                <button type="button" class="modal-close" @onclick="CloseChangesModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre class="changes-json">@changesJson</pre>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AuditLogEntry>? auditLogs;
+    private string selectedEntityType = "";
+    private string selectedAction = "";
+    private string searchUsername = "";
+    private int currentPage = 1;
+    private const int pageSize = 50;
+    private bool hasPrevious = false;
+    private bool hasNext = false;
+    private bool showChangesModal = false;
+    private string changesJson = "";
+    private bool canViewAudit = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var username = state.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+
+        canViewAudit = await PermissionService.IsAllowedAsync(role, Permissions.AuditLogView);
+        if (!canViewAudit)
+        {
+            Nav.NavigateTo("/admin/articles");
+            return;
+        }
+
+        await LoadLogs();
+    }
+
+    private async Task LoadLogs()
+    {
+        currentPage = 1;
+        await LoadLogsPage();
+    }
+
+    private async Task LoadLogsPage()
+    {
+        var logs = await UserService.GetAuditLogAsync(null, currentPage * pageSize);
+        
+        // Apply filters
+        var filtered = logs.AsQueryable();
+        
+        if (!string.IsNullOrWhiteSpace(selectedEntityType))
+            filtered = filtered.Where(l => l.EntityType == selectedEntityType);
+        
+        if (!string.IsNullOrWhiteSpace(selectedAction))
+            filtered = filtered.Where(l => l.Action == selectedAction);
+        
+        if (!string.IsNullOrWhiteSpace(searchUsername))
+            filtered = filtered.Where(l => l.Username.Contains(searchUsername, StringComparison.OrdinalIgnoreCase));
+        
+        var filteredList = filtered.ToList();
+        auditLogs = filteredList.Skip((currentPage - 1) * pageSize).Take(pageSize).ToList();
+        
+        hasPrevious = currentPage > 1;
+        hasNext = filteredList.Count > currentPage * pageSize;
+    }
+
+    private async Task LoadPrevious()
+    {
+        if (hasPrevious)
+        {
+            currentPage--;
+            await LoadLogsPage();
+        }
+    }
+
+    private async Task LoadNext()
+    {
+        if (hasNext)
+        {
+            currentPage++;
+            await LoadLogsPage();
+        }
+    }
+
+    private void ShowChanges(string json)
+    {
+        changesJson = FormatJson(json);
+        showChangesModal = true;
+    }
+
+    private void CloseChangesModal()
+    {
+        showChangesModal = false;
+        changesJson = "";
+    }
+
+    private string FormatJson(string json)
+    {
+        try
+        {
+            var parsed = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(parsed, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return json;
+        }
+    }
+
+    private string GetActionClass(string action) => action switch
+    {
+        "Created" => "action-created",
+        "Updated" => "action-updated",
+        "Deleted" => "action-deleted",
+        "Published" => "action-published",
+        "Unpublished" => "action-unpublished",
+        "Login" => "action-login",
+        "Logout" => "action-logout",
+        "PasswordChanged" => "action-password",
+        "Restored" => "action-restored",
+        _ => ""
+    };
+}

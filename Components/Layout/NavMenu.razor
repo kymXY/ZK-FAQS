@@ -1,0 +1,138 @@
+@implements IDisposable
+@inject ArticleService ArticleService
+@inject NavigationManager Nav
+
+<nav class="sidebar" aria-label="Categories">
+    @if (categories is null)
+    {
+        <p class="sidebar-loading">Loading…</p>
+    }
+    else
+    {
+        @foreach (var category in categories.Where(c => c.IsVisible))
+        {
+            var isActive = expandedCategoryId == category.Id;
+            var directArticles = category.Articles.Where(a => a.IsPublished).OrderBy(a => a.SortOrder).ToList();
+            var visibleSubs = category.SubCategories.Where(s => s.IsVisible).ToList();
+            var hasArticles = directArticles.Count > 0 || visibleSubs.Any(s => s.Articles.Any(a => a.IsPublished));
+            <div class="module-group @(isActive ? "active" : "") @(!hasArticles ? "empty" : "")">
+                <button type="button" class="module-title" @onclick="() => ToggleCategory(category.Id)" aria-expanded="@isActive" style="--category-color: @category.Color">
+                    <span class="icon">@category.Icon</span>
+                    <span class="name">@category.Name</span>
+                    <span class="dot"></span>
+                </button>
+                @if (isActive && hasArticles)
+                {
+                    <ul class="sub-list">
+                        @foreach (var article in directArticles)
+                        {
+                            <li>
+                                <a href="@($"/article/{article.Id}")" class="@(IsCurrentArticle(article.Id) ? "current" : "")">
+                                    @article.Title
+                                    @if (article.IsFeatured) { <span class="featured-dot" title="Featured">★</span> }
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                    @foreach (var sub in visibleSubs)
+                    {
+                        var subArticles = sub.Articles.Where(a => a.IsPublished).OrderBy(a => a.SortOrder).ToList();
+                        @if (subArticles.Count > 0)
+                        {
+                            var isSubActive = expandedSubCategoryId == sub.Id;
+                            <button type="button" class="sub-category-toggle @(isSubActive ? "active" : "")" @onclick="() => ToggleSubCategory(sub.Id)" aria-expanded="@isSubActive">
+                                <span class="chevron">▸</span>
+                                <span class="name">@sub.Name</span>
+                                <span class="sub-count">@subArticles.Count</span>
+                            </button>
+                            @if (isSubActive)
+                            {
+                                <ul class="sub-list sub-list-nested">
+                                    @foreach (var article in subArticles)
+                                    {
+                                        <li>
+                                            <a href="@($"/article/{article.Id}")" class="@(IsCurrentArticle(article.Id) ? "current" : "")">
+                                                @article.Title
+                                                @if (article.IsFeatured) { <span class="featured-dot" title="Featured">★</span> }
+                                            </a>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        }
+                    }
+                }
+            </div>
+        }
+    }
+</nav>
+
+@code {
+    private List<Category>? categories;
+    private int? expandedCategoryId;
+    private int? expandedSubCategoryId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        categories = await ArticleService.GetCategoriesWithArticlesAsync();
+        SyncExpandedFromCurrentArticle();
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        SyncExpandedFromCurrentArticle();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleCategory(int categoryId)
+    {
+        expandedCategoryId = expandedCategoryId == categoryId ? null : categoryId;
+        // Closing/switching the top-level module also closes whichever subcategory
+        // was open inside it — it's about to disappear from view anyway.
+        expandedSubCategoryId = null;
+    }
+
+    private void ToggleSubCategory(int subCategoryId)
+    {
+        expandedSubCategoryId = expandedSubCategoryId == subCategoryId ? null : subCategoryId;
+    }
+
+    private int? CurrentArticleId()
+    {
+        var relative = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        var parts = relative.Split('/');
+        if (parts.Length >= 2 && parts[0] == "article" && int.TryParse(parts[1], out var id))
+        {
+            return id;
+        }
+        return null;
+    }
+
+    /// <summary>The current article might belong directly to a top-level category, or to
+    /// one of its subcategories — either way we expand the top-level module it lives under.</summary>
+    private int? FindTopCategoryIdForArticle(int articleId) =>
+        categories?.FirstOrDefault(c =>
+            c.Articles.Any(a => a.Id == articleId) ||
+            c.SubCategories.Any(s => s.Articles.Any(a => a.Id == articleId)))?.Id;
+
+    private int? FindSubCategoryIdForArticle(int articleId) =>
+        categories?.SelectMany(c => c.SubCategories).FirstOrDefault(s => s.Articles.Any(a => a.Id == articleId))?.Id;
+
+    /// <summary>Expands whatever module (and, if relevant, subcategory) contains the
+    /// article currently being viewed. Everything stays collapsed if there's no
+    /// current article — nothing auto-opens just because it's the first one.</summary>
+    private void SyncExpandedFromCurrentArticle()
+    {
+        var currentId = CurrentArticleId();
+        expandedCategoryId = currentId is null ? null : FindTopCategoryIdForArticle(currentId.Value);
+        expandedSubCategoryId = currentId is null ? null : FindSubCategoryIdForArticle(currentId.Value);
+    }
+
+    private bool IsCurrentArticle(int id) => CurrentArticleId() == id;
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

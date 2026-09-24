@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No static color-scheme meta here on purpose. "light dark" tells the
+         browser to theme native form controls (select, input, checkbox)
+         from the OS preference directly, bypassing our own .dark-mode class.
+         On a machine set to OS dark mode that produced dropdowns and inputs
+         rendered black-on-black while the rest of the page stayed light —
+         exactly the illegible fields reported. color-scheme is set in CSS
+         instead, scoped to our own theme class, so native controls follow
+         the app's toggle, not the OS. -->
+    <base href="/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/app.css" />
+
+    <!-- Theme bootstrap. Runs before first paint and before Blazor starts.
+         Previously nothing re-applied the dark-mode class on load: setDarkMode()
+         added it on click, but a refresh or navigation dropped it, so the
+         preference only survived until the next page load. The toggle icon
+         still showed "dark" because ThemeToggle read the stored value — which
+         is why the icon and the actual theme disagreed. -->
+    <script>
+        (function () {
+            var stored = null;
+            try { stored = localStorage.getItem('darkMode'); } catch (e) { }
+            var dark = stored === null
+                ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                : stored === 'true';
+            if (dark) { document.documentElement.classList.add('dark-mode'); }
+        })();
+    </script>
+
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+    <script src="js/searchShortcut.js"></script>
+</body>
+</html>

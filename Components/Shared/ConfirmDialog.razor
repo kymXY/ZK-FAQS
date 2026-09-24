@@ -1,0 +1,51 @@
+@implements IDisposable
+@inject ConfirmService Confirm
+
+@if (visible)
+{
+    <div class="modal-overlay" @onclick="() => Resolve(false)">
+        <div class="modal-content confirm-dialog" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>@title</h3>
+                <button type="button" class="modal-close" @onclick="() => Resolve(false)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>@message</p>
+                <div class="form-actions">
+                    <button type="button" class="@(Confirm.Danger ? "btn-danger" : "btn-primary")" @onclick="() => Resolve(true)">@Confirm.ConfirmLabel</button>
+                    <button type="button" class="btn-secondary" @onclick="() => Resolve(false)">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool visible;
+    private string title = "";
+    private string message = "";
+
+    protected override void OnInitialized()
+    {
+        Confirm.OnShow += HandleShow;
+    }
+
+    private void HandleShow(ConfirmRequest request)
+    {
+        title = request.Title;
+        message = request.Message;
+        visible = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void Resolve(bool result)
+    {
+        visible = false;
+        Confirm.Resolve(result);
+    }
+
+    public void Dispose()
+    {
+        Confirm.OnShow -= HandleShow;
+    }
+}

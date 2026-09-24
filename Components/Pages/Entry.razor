@@ -1,0 +1,182 @@
+@page "/"
+@page "/entry"
+@page "/entry/visitor"
+@page "/admin/login"
+@layout FaqCms.Components.Layout.BlankLayout
+@inject NavigationManager Nav
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+
+<div class="entry-shell">
+    <div class="entry-card">
+        <div class="entry-header">
+            <div class="entry-logo">
+                <span class="logo-mark" aria-hidden="true"></span>
+                Helpdesk Portal
+            </div>
+            <h1>Welcome to Helpdesk</h1>
+            <p class="entry-subtitle">Access self-service guides or sign in to manage content</p>
+        </div>
+
+        <div class="entry-tabs">
+            <button type="button" class="entry-tab-btn @(activeTab == "guest" ? "active" : "")" @onclick='() => activeTab = "guest"'>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="9" cy="7" r="4"></circle>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+                Continue as Guest
+            </button>
+            <button type="button" class="entry-tab-btn @(activeTab == "admin" ? "active" : "")" @onclick='() => activeTab = "admin"'>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                Staff / Admin Login
+            </button>
+        </div>
+
+        @if (activeTab == "guest")
+        {
+            <div class="tab-panel">
+                <EditForm Model="guestModel" OnValidSubmit="SubmitGuestInfo">
+                    <DataAnnotationsValidator />
+
+                    <div class="field">
+                        <label>
+                            <span>Company Name <span class="required-tag">*</span></span>
+                            <InputText @bind-Value="guestModel.Company" placeholder="e.g. Acme Corp or ZK Payroll" class="entry-input" autofocus />
+                            <ValidationMessage For="@(() => guestModel.Company)" />
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label>
+                            <span>Your Name <span class="optional-tag">(optional)</span></span>
+                            <InputText @bind-Value="guestModel.Name" placeholder="e.g. Jane Doe" class="entry-input" />
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn-primary entry-submit-btn">
+                        <span>Enter Knowledge Base</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
+                </EditForm>
+            </div>
+        }
+        else
+        {
+            <div class="tab-panel">
+                @if (ShowError)
+                {
+                    <div class="login-error">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                        <span>@(Error switch
+                        {
+                            "2" => "Something went wrong signing in — please try again in a moment.",
+                            "3" => "Too many failed sign-in attempts. Please wait a few minutes and try again.",
+                            _ => "Incorrect username or password."
+                        })</span>
+                    </div>
+                }
+
+                <form method="post" action="/api/admin/login" data-enhance-nav="false">
+                    <div class="field">
+                        <label>
+                            <span>Username</span>
+                            <input type="text" name="username" autocomplete="username" required autofocus class="entry-input" />
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label>
+                            <span>Password</span>
+                            <input type="password" name="password" autocomplete="current-password" required class="entry-input" />
+                        </label>
+                    </div>
+
+                    <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+
+                    <button type="submit" class="btn-primary entry-submit-btn">
+                        <span>Sign in to Admin</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
+                </form>
+            </div>
+        }
+
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    private string? ReturnUrlParam { get; set; }
+
+    private string activeTab = "guest";
+    private GuestEntryModel guestModel = new();
+    private string? existingCompany;
+    private string? existingName;
+
+    private bool ShowError => Error is "1" or "2" or "3";
+    private string ReturnUrl => string.IsNullOrWhiteSpace(ReturnUrlParam) ? "/admin/articles" : ReturnUrlParam;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true && !ShowError)
+        {
+            Nav.NavigateTo("/helpdesk");
+            return;
+        }
+
+        var uri = Nav.ToBaseRelativePath(Nav.Uri);
+        if (uri.Contains("admin/login") || ShowError)
+        {
+            activeTab = "admin";
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            existingCompany = await JS.InvokeAsync<string>("getVisitorCompany");
+            existingName = await JS.InvokeAsync<string>("getVisitorName");
+
+            if (!string.IsNullOrWhiteSpace(existingCompany) && string.IsNullOrWhiteSpace(guestModel.Company))
+            {
+                guestModel.Company = existingCompany;
+                guestModel.Name = existingName;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task SubmitGuestInfo()
+    {
+        if (string.IsNullOrWhiteSpace(guestModel.Company)) return;
+
+        await JS.InvokeVoidAsync("setVisitorInfo", guestModel.Company.Trim(), guestModel.Name?.Trim());
+
+        // Previously jumped straight into the first published article,
+        // skipping the "Welcome to the Helpdesk" landing page entirely.
+        // Land there first; it links into the articles from there.
+        Nav.NavigateTo("/helpdesk");
+    }
+
+    public class GuestEntryModel
+    {
+        [Required(ErrorMessage = "Company name is required")]
+        [MinLength(2, ErrorMessage = "Company name must be at least 2 characters")]
+        [MaxLength(200, ErrorMessage = "Company name must be 200 characters or fewer")]
+        public string Company { get; set; } = "";
+
+        [MaxLength(200, ErrorMessage = "Name must be 200 characters or fewer")]
+        public string? Name { get; set; }
+    }
+}

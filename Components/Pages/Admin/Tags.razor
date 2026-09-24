@@ -1,0 +1,209 @@
+@page "/admin/tags"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<div class="admin-header-row">
+    <div>
+        <h1>Tags</h1>
+        <p class="admin-users-sub">Organize articles with tags for better discoverability.</p>
+    </div>
+    @if (isReadOnly)
+    {
+        <span class="readonly-pill">Read-Only Viewer</span>
+    }
+</div>
+
+@if (errorMessage is not null)
+{
+    <p class="login-error">@errorMessage</p>
+}
+
+@if (tags is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="table-scroll">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Slug</th>
+                <th>Color</th>
+                @if (!isReadOnly)
+                {
+                    <th></th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var tag in tags)
+            {
+                <tr>
+                    <td>
+                        @if (editingId == tag.Id && !isReadOnly)
+                        {
+                            <input value="@editName" @oninput="e => editName = e.Value?.ToString() ?? string.Empty" />
+                        }
+                        else
+                        {
+                            <span class="category-name">@tag.Name</span>
+                        }
+                    </td>
+                    <td>@tag.Slug</td>
+                    <td>
+                        @if (editingId == tag.Id && !isReadOnly)
+                        {
+                            <input type="color" value="@editColor" @oninput="e => editColor = e.Value?.ToString() ?? string.Empty" class="w-color" />
+                        }
+                        else
+                        {
+                            <span class="color-swatch" style="--swatch-color: @tag.Color"></span>
+                            <span class="count">@tag.Color</span>
+                        }
+                    </td>
+                    @if (!isReadOnly)
+                    {
+                        <td class="row-actions">
+                            @if (editingId == tag.Id)
+                            {
+                                <button type="button" class="btn-primary" @onclick="() => SaveTag(tag.Id)">Save</button>
+                                <button type="button" class="link-muted" @onclick="CancelEdit">Cancel</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="link-muted" @onclick="() => StartEdit(tag)">Edit</button>
+                                <button type="button" class="link-danger" @onclick="() => Delete(tag.Id, tag.Name, tag.ArticleTags?.Count ?? 0)">Delete</button>
+                            }
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+
+    @if (!isReadOnly)
+    {
+        <div class="add-category-row">
+            <div class="add-category-row-fields">
+                <input placeholder="Tag name" value="@newName" @oninput="e => newName = e.Value?.ToString() ?? string.Empty" class="w-md" />
+                <input type="color" value="@newColor" @oninput="e => newColor = e.Value?.ToString() ?? string.Empty" class="w-color" />
+                <button type="button" class="btn-primary" @onclick="Add">+ Add tag</button>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<Tag>? tags;
+    private bool isReadOnly = true;
+    private string? errorMessage;
+    private string newName = "";
+    private string newColor = "#1F7A4D";
+    private int? editingId;
+    private string editName = "";
+    private string editColor = "#1F7A4D";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+        isReadOnly = !await PermissionService.IsAllowedAsync(role, Permissions.TagsManage);
+
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        tags = await ArticleService.GetAllTagsAsync();
+    }
+
+    private async Task Add()
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            errorMessage = "Name is required.";
+            return;
+        }
+        
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name ?? "admin";
+        var (created, error) = await ArticleService.CreateTagAsync(newName.Trim(), newColor, username);
+        if (created is null)
+        {
+            errorMessage = error;
+            return;
+        }
+        newName = "";
+        await Load();
+    }
+
+    private void StartEdit(Tag tag)
+    {
+        if (isReadOnly) return;
+        editingId = tag.Id;
+        editName = tag.Name;
+        editColor = tag.Color ?? "#4F46E5";
+    }
+
+    private void CancelEdit() => editingId = null;
+
+    private async Task SaveTag(int id)
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(editName))
+        {
+            errorMessage = "Name is required.";
+            return;
+        }
+        
+        var tag = tags?.FirstOrDefault(t => t.Id == id);
+        if (tag != null)
+        {
+            tag.Name = editName.Trim();
+            tag.Color = editColor;
+            
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            var username = auth.User.Identity?.Name ?? "admin";
+            var error = await ArticleService.UpdateTagAsync(tag, username);
+            if (error is not null)
+            {
+                errorMessage = error;
+                await Load();
+                return;
+            }
+        }
+        
+        editingId = null;
+        await Load();
+    }
+
+    private async Task Delete(int id, string name, int articleCount)
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+
+        var message = articleCount > 0
+            ? $"Delete \"{name}\"? It's currently applied to {articleCount} article(s) — they'll lose this tag until you restore it. It'll move to the Recycle Bin and can be restored later."
+            : $"Delete \"{name}\"? It'll move to the Recycle Bin and can be restored later.";
+
+        var confirmed = await Confirm.ShowAsync("Delete tag?", message);
+        if (!confirmed) return;
+
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name ?? "admin";
+        await ArticleService.DeleteTagAsync(id, username);
+        await Load();
+    }
+}

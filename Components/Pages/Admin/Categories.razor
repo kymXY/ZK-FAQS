@@ -1,0 +1,456 @@
+@page "/admin/categories"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<style>
+    /* ── Categories page overrides ── */
+    .cat-page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap; }
+    .cat-page-header h1 { margin: 0 0 .25rem; }
+    .cat-page-header p { margin: 0; color: var(--color-text-muted, #6b7280); font-size: .9rem; }
+
+    .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
+
+    .cat-card {
+        border: 1.5px solid var(--color-border, #e5e7eb);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--color-surface, #fff);
+        box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        transition: box-shadow .15s;
+    }
+    .cat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+
+    .cat-card-header {
+        display: flex; align-items: center; gap: .75rem;
+        padding: .9rem 1rem;
+        border-bottom: 1px solid var(--color-border, #e5e7eb);
+        position: relative;
+    }
+    .cat-card-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 12px 0 0 0; }
+    .cat-card-icon { font-size: 1.6rem; line-height: 1; flex-shrink: 0; margin-left: .5rem; }
+    .cat-card-title { font-weight: 600; font-size: 1rem; flex: 1; min-width: 0; }
+    .cat-card-title small { display: block; font-size: .75rem; font-weight: 400; color: var(--color-text-muted, #6b7280); font-family: monospace; }
+    .cat-card-badges { display: flex; gap: .4rem; flex-shrink: 0; align-items: center; }
+    .cat-card-badge { font-size: .7rem; padding: 2px 7px; border-radius: 20px; font-weight: 500; }
+    .badge-visible { background: #d1fae5; color: #065f46; }
+    .badge-hidden { background: #fee2e2; color: #991b1b; }
+    .badge-articles { background: #ede9fe; color: #5b21b6; }
+
+    .cat-card-desc { padding: .6rem 1rem; font-size: .83rem; color: var(--color-text-muted, #6b7280); border-bottom: 1px solid var(--color-border, #e5e7eb); min-height: 2.4rem; }
+
+    .cat-sub-list { padding: .5rem .75rem; display: flex; flex-direction: column; gap: .35rem; }
+    .cat-sub-label { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted, #9ca3af); padding: .25rem .25rem 0; }
+    .cat-sub-item {
+        display: flex; align-items: center; gap: .5rem;
+        padding: .45rem .6rem;
+        border-radius: 8px;
+        background: var(--color-bg-subtle, #f9fafb);
+        border: 1px solid var(--color-border, #e5e7eb);
+        font-size: .85rem;
+    }
+    .cat-sub-item-icon { font-size: 1rem; }
+    .cat-sub-item-name { flex: 1; font-weight: 500; }
+    .cat-sub-item-meta { font-size: .75rem; color: var(--color-text-muted, #9ca3af); }
+    .cat-sub-item-actions { display: flex; gap: .3rem; }
+    .cat-sub-item-actions button { font-size: .75rem; padding: 2px 7px; }
+
+    .cat-card-actions { display: flex; gap: .5rem; padding: .65rem 1rem; border-top: 1px solid var(--color-border, #e5e7eb); background: var(--color-bg-subtle, #f9fafb); flex-wrap: wrap; }
+
+    /* Inline edit form inside a card */
+    .cat-edit-form { padding: .75rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
+    .cat-edit-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .cat-edit-row label { font-size: .78rem; color: var(--color-text-muted, #6b7280); margin-bottom: 1px; }
+    .cat-edit-field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 100px; }
+    .cat-edit-field input, .cat-edit-field select { font-size: .85rem; padding: .3rem .5rem; border: 1px solid var(--color-border, #d1d5db); border-radius: 6px; background: var(--color-surface, #fff); }
+    .cat-edit-field input[type="color"] { height: 32px; width: 48px; padding: 2px; }
+    .cat-edit-actions { display: flex; gap: .5rem; margin-top: .25rem; }
+
+    /* Add-new panel */
+    .cat-add-panel {
+        border: 2px dashed var(--color-border, #d1d5db);
+        border-radius: 12px;
+        padding: 1.25rem;
+        background: var(--color-bg-subtle, #f9fafb);
+    }
+    .cat-add-panel h3 { margin: 0 0 .9rem; font-size: .95rem; color: var(--color-text-muted, #374151); }
+    .cat-add-fields { display: flex; flex-direction: column; gap: .6rem; }
+    .cat-add-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: flex-end; }
+    .cat-add-row input, .cat-add-row select { font-size: .85rem; padding: .38rem .55rem; border: 1px solid var(--color-border, #d1d5db); border-radius: 6px; background: var(--color-surface, #fff); }
+    .cat-add-row input[type="color"] { height: 34px; width: 48px; padding: 2px; }
+    .cat-add-row .grow { flex: 1; min-width: 120px; }
+    .cat-stat-row { font-size: .78rem; color: var(--color-text-muted, #9ca3af); padding: .25rem 0 0; }
+
+    @@media (max-width: 600px) {
+        .cat-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+<div class="cat-page-header">
+    <div>
+        <h1>Categories</h1>
+        <p>Organize articles into modules and subcategories. Deleting a subcategory reassigns its articles to the parent — nothing gets lost.</p>
+    </div>
+    @if (isReadOnly)
+    {
+        <span class="readonly-pill">Read-Only Viewer</span>
+    }
+</div>
+
+@if (errorMessage is not null)
+{
+    <p class="login-error">@errorMessage</p>
+}
+
+@if (categories is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="cat-grid">
+        @foreach (var category in categories.OrderBy(c => c.SortOrder))
+        {
+            @RenderCard(category)
+        }
+
+        @if (!isReadOnly)
+        {
+            <div class="cat-add-panel">
+                <h3>@(newParentCategoryId is null ? "✚ New Category" : $"✚ Subcategory of \"{categories?.FirstOrDefault(c => c.Id == newParentCategoryId)?.Name}\"")</h3>
+                <div class="cat-add-fields">
+                    <div class="cat-add-row">
+                        <select value="@(newParentCategoryId?.ToString() ?? "")" @onchange="e => newParentCategoryId = string.IsNullOrEmpty(e.Value?.ToString()) ? null : int.Parse(e.Value.ToString()!)" style="min-width:150px">
+                            <option value="">— Top level —</option>
+                            @foreach (var top in categories ?? Enumerable.Empty<Category>())
+                            {
+                                <option value="@top.Id">Sub of: @top.Name</option>
+                            }
+                        </select>
+                        <input placeholder="Name *" value="@newName" @oninput="e => newName = e.Value?.ToString() ?? string.Empty" class="grow" />
+                        <input placeholder="Icon" value="@newIcon" @oninput="e => newIcon = e.Value?.ToString() ?? string.Empty" style="width:64px;text-align:center" />
+                    </div>
+                    <div class="cat-add-row">
+                        <input placeholder="Slug (auto-generated)" value="@newSlug" @oninput="e => newSlug = e.Value?.ToString() ?? string.Empty" class="grow" />
+                        <input type="color" value="@newColor" @oninput="e => newColor = e.Value?.ToString() ?? string.Empty" title="Accent color" />
+                        <input placeholder="Description" value="@newDescription" @oninput="e => newDescription = e.Value?.ToString() ?? string.Empty" class="grow" />
+                        <button type="button" class="btn-primary" @onclick="Add">+ Add</button>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (categories is not null)
+    {
+        <p class="cat-stat-row">@categories.Count top-level &nbsp;·&nbsp; @categories.Sum(c => c.SubCategories.Count) subcategories &nbsp;·&nbsp; @categories.Sum(c => c.Articles.Count + c.SubCategories.Sum(s => s.Articles.Count)) articles total</p>
+    }
+}
+
+@code {
+    private List<Category>? categories;
+    private bool isReadOnly = true;
+    private string? errorMessage;
+    private string newName = "";
+    private string newIcon = "📁";
+    private string newSlug = "";
+    private string newColor = "#1F7A4D";
+    private string newDescription = "";
+    private int? newParentCategoryId;
+
+    private int? editingId;
+    private string editName = "";
+    private string editIcon = "";
+    private string editSlug = "";
+    private string editColor = "";
+    private string editDescription = "";
+    private bool editIsVisible = true;
+    private int editSortOrder;
+    private int? editParentCategoryId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var username = auth.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+        isReadOnly = !await PermissionService.IsAllowedAsync(role, Permissions.CategoriesManage);
+
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        categories = await ArticleService.GetCategoriesWithArticlesAsync(true);
+    }
+
+    /// <summary>Renders a top-level category as a card, with its subcategories listed inside.</summary>
+    private RenderFragment RenderCard(Category category) => __builder =>
+    {
+        var accentColor = string.IsNullOrWhiteSpace(category.Color) ? "#1F7A4D" : category.Color;
+        var totalArticles = category.Articles.Count + category.SubCategories.Sum(s => s.Articles.Count);
+
+        <div class="cat-card">
+            @if (editingId == category.Id && !isReadOnly)
+            {
+                <!-- Edit mode for the parent category -->
+                <div class="cat-card-header">
+                    <div class="cat-card-accent" style="background:@accentColor"></div>
+                    <span class="cat-card-icon">@category.Icon</span>
+                    <span class="cat-card-title" style="color:@accentColor">Editing…</span>
+                </div>
+                <div class="cat-edit-form">
+                    <div class="cat-edit-row">
+                        <div class="cat-edit-field" style="max-width:64px">
+                            <label>Icon</label>
+                            <input value="@editIcon" @oninput="e => editIcon = e.Value?.ToString() ?? string.Empty" style="text-align:center" />
+                        </div>
+                        <div class="cat-edit-field">
+                            <label>Name</label>
+                            <input value="@editName" @oninput="e => editName = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                        <div class="cat-edit-field" style="max-width:48px">
+                            <label>Color</label>
+                            <input type="color" value="@editColor" @oninput="e => editColor = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                    </div>
+                    <div class="cat-edit-row">
+                        <div class="cat-edit-field">
+                            <label>Slug</label>
+                            <input value="@editSlug" @oninput="e => editSlug = e.Value?.ToString() ?? string.Empty" placeholder="auto-generated" />
+                        </div>
+                        <div class="cat-edit-field" style="max-width:60px">
+                            <label>Order</label>
+                            <input type="number" @bind="editSortOrder" />
+                        </div>
+                    </div>
+                    <div class="cat-edit-row">
+                        <div class="cat-edit-field">
+                            <label>Description</label>
+                            <input value="@editDescription" @oninput="e => editDescription = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                    </div>
+                    <div class="cat-edit-row">
+                        <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem">
+                            <input type="checkbox" checked="@editIsVisible" @onchange="e => editIsVisible = (bool)e.Value!" />
+                            Visible
+                        </label>
+                    </div>
+                    <div class="cat-edit-actions">
+                        <button type="button" class="btn-primary" @onclick="() => SaveCategory(category.Id)">Save</button>
+                        <button type="button" class="link-muted" @onclick="CancelEdit">Cancel</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <!-- View mode -->
+                <div class="cat-card-header">
+                    <div class="cat-card-accent" style="background:@accentColor"></div>
+                    <span class="cat-card-icon">@category.Icon</span>
+                    <div class="cat-card-title">
+                        @category.Name
+                        <small>/@category.Slug</small>
+                    </div>
+                    <div class="cat-card-badges">
+                        <span class="cat-card-badge @(category.IsVisible ? "badge-visible" : "badge-hidden")">@(category.IsVisible ? "Visible" : "Hidden")</span>
+                        @if (totalArticles > 0)
+                        {
+                            <span class="cat-card-badge badge-articles">@totalArticles art.</span>
+                        }
+                        <span style="font-size:.8rem;color:var(--color-text-muted,#9ca3af)">#@category.SortOrder</span>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(category.Description))
+                {
+                    <div class="cat-card-desc">@category.Description</div>
+                }
+
+                @if (category.SubCategories.Any())
+                {
+                    <div class="cat-sub-list">
+                        <div class="cat-sub-label">Subcategories</div>
+                        @foreach (var sub in category.SubCategories.OrderBy(s => s.SortOrder))
+                        {
+                            <div class="cat-sub-item">
+                                <span class="cat-sub-item-icon">@sub.Icon</span>
+                                @if (editingId == sub.Id && !isReadOnly)
+                                {
+                                    <!-- Inline edit for subcategory -->
+                                    <div style="flex:1;display:flex;flex-direction:column;gap:.4rem">
+                                        <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                                            <input value="@editIcon" @oninput="e => editIcon = e.Value?.ToString() ?? string.Empty" placeholder="Icon" style="width:48px;text-align:center" />
+                                            <input value="@editName" @oninput="e => editName = e.Value?.ToString() ?? string.Empty" placeholder="Name" style="flex:1" />
+                                            <input type="color" value="@editColor" @oninput="e => editColor = e.Value?.ToString() ?? string.Empty" style="width:40px;height:32px;padding:2px" />
+                                        </div>
+                                        <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                                            <input value="@editSlug" @oninput="e => editSlug = e.Value?.ToString() ?? string.Empty" placeholder="Slug" style="flex:1" />
+                                            <input value="@editDescription" @oninput="e => editDescription = e.Value?.ToString() ?? string.Empty" placeholder="Description" style="flex:1" />
+                                        </div>
+                                        <div style="display:flex;gap:.4rem;align-items:center">
+                                            <label style="display:flex;align-items:center;gap:.3rem;font-size:.8rem">
+                                                <input type="checkbox" checked="@editIsVisible" @onchange="e => editIsVisible = (bool)e.Value!" /> Visible
+                                            </label>
+                                            <button type="button" class="btn-primary" style="font-size:.78rem;padding:.25rem .6rem" @onclick="() => SaveCategory(sub.Id)">Save</button>
+                                            <button type="button" class="link-muted" style="font-size:.78rem" @onclick="CancelEdit">Cancel</button>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span class="cat-sub-item-name">@sub.Name</span>
+                                    <span class="cat-sub-item-meta">@sub.Articles.Count art.</span>
+                                    <span class="cat-sub-item-meta @(sub.IsVisible ? "" : "badge-hidden")" style="@(sub.IsVisible ? "" : "background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:10px;font-size:.7rem")">@(sub.IsVisible ? "" : "Hidden")</span>
+                                    @if (!isReadOnly)
+                                    {
+                                        <div class="cat-sub-item-actions">
+                                            <button type="button" class="link-muted" @onclick="() => StartEdit(sub)">Edit</button>
+                                            <button type="button" class="link-danger" @onclick="() => Delete(sub)">✕</button>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (!isReadOnly)
+                {
+                    <div class="cat-card-actions">
+                        <button type="button" class="link-muted" @onclick="() => StartEdit(category)">✎ Edit</button>
+                        <button type="button" class="link-muted" @onclick="() => StartAddSubcategory(category)">+ Subcategory</button>
+                        <button type="button" class="link-danger" style="margin-left:auto" @onclick="() => Delete(category)">Delete</button>
+                    </div>
+                }
+            }
+        </div>
+    };
+
+    private void StartAddSubcategory(Category parent)
+    {
+        newParentCategoryId = parent.Id;
+        newName = "";
+        newIcon = parent.Icon;
+        newSlug = "";
+        newDescription = "";
+        newColor = parent.Color ?? "#1F7A4D";
+    }
+
+    private async Task Add()
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            errorMessage = "Name is required.";
+            return;
+        }
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+
+        var (created, error) = await ArticleService.CreateCategoryAsync(newName.Trim(), newIcon, newDescription, newColor, username, newSlug, newParentCategoryId);
+        if (created is null)
+        {
+            errorMessage = error;
+            return;
+        }
+
+        newName = "";
+        newIcon = "📁";
+        newSlug = "";
+        newDescription = "";
+        newColor = "#1F7A4D";
+        newParentCategoryId = null;
+        await Load();
+    }
+
+    private void StartEdit(Category category)
+    {
+        if (isReadOnly) return;
+        editingId = category.Id;
+        editName = category.Name;
+        editIcon = category.Icon;
+        editSlug = category.Slug;
+        editColor = category.Color ?? "#4F46E5";
+        editDescription = category.Description ?? "";
+        editIsVisible = category.IsVisible;
+        editSortOrder = category.SortOrder;
+        editParentCategoryId = category.ParentCategoryId;
+    }
+
+    private void CancelEdit() => editingId = null;
+
+    private async Task SaveCategory(int id)
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(editName))
+        {
+            errorMessage = "Name is required.";
+            return;
+        }
+
+        var category = categories?.SelectMany(c => new[] { c }.Concat(c.SubCategories)).FirstOrDefault(c => c.Id == id);
+        if (category != null)
+        {
+            category.Name = editName.Trim();
+            category.Icon = editIcon;
+            category.Slug = string.IsNullOrWhiteSpace(editSlug) ? editName : editSlug;
+            category.Color = editColor;
+            category.Description = editDescription;
+            category.IsVisible = editIsVisible;
+            category.SortOrder = editSortOrder;
+            category.ParentCategoryId = editParentCategoryId;
+
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var username = authState.User.Identity?.Name ?? "admin";
+            var error = await ArticleService.UpdateCategoryAsync(category, username);
+            if (error is not null)
+            {
+                errorMessage = error;
+                await Load(); // discard the in-memory edits above; reload the saved values
+                return;
+            }
+            editingId = null;
+            await Load();
+        }
+    }
+
+    private async Task Delete(Category category)
+    {
+        if (isReadOnly) return;
+        errorMessage = null;
+
+        var totalArticles = category.Articles.Count + category.SubCategories.Sum(s => s.Articles.Count);
+        string message;
+        if (category.ParentCategoryId is not null)
+        {
+            // Subcategory: articles are reassigned to the parent, not deleted.
+            var parentName = categories?.FirstOrDefault(c => c.Id == category.ParentCategoryId)?.Name ?? "the parent category";
+            message = category.Articles.Count > 0
+                ? $"Delete subcategory \"{category.Name}\"? Its {category.Articles.Count} article(s) will be moved to \"{parentName}\" — nothing will be lost."
+                : $"Delete subcategory \"{category.Name}\"? It has no articles, so nothing else will be affected.";
+        }
+        else
+        {
+            message = category.SubCategories.Count > 0
+                ? $"Delete \"{category.Name}\"? This will also delete its {category.SubCategories.Count} subcategor{(category.SubCategories.Count == 1 ? "y" : "ies")} and move {totalArticles} article(s) to the Recycle Bin. You can restore them later."
+                : totalArticles > 0
+                    ? $"Delete \"{category.Name}\"? This category has {totalArticles} article(s), which will move to the Recycle Bin along with it. You can restore them later."
+                    : $"Delete \"{category.Name}\"? It'll move to the Recycle Bin and can be restored later.";
+        }
+
+        var confirmed = await Confirm.ShowAsync("Delete category?", message);
+        if (!confirmed) return;
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+        await ArticleService.DeleteCategoryAsync(category.Id, username);
+        await Load();
+    }
+}

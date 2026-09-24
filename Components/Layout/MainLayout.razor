@@ -1,0 +1,98 @@
+@inherits LayoutComponentBase
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+
+<div class="shell @(sidebarOpen ? "" : "sidebar-collapsed")">
+    <header class="topbar">
+        <div class="topbar-left">
+            <button type="button" class="sidebar-toggle" @onclick="ToggleSidebar"
+                    aria-label="@(sidebarOpen ? "Hide navigation" : "Show navigation")"
+                    aria-expanded="@sidebarOpen">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <a class="C:\Users\User\Documents\FAQ MOCK UP DESIGN\ZKFAQ\FaqCms\logo\zkpayrollkb.png" href="/helpdesk">
+                <img src="zkpayrollkb.png" alt="Helpdesk Logo" class="logo-image" />
+                <span class="logo-mark" aria-hidden="true"></span>
+                Helpdesk
+            </a>
+        </div>
+        <div class="topbar-right">
+            <SearchOverlay />
+            @if (!string.IsNullOrWhiteSpace(visitorCompany))
+            {
+                <div class="visitor-badge" title="Browsing as @visitorCompany">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                    </svg>
+                    <span class="visitor-company">@visitorCompany</span>
+                    @if (!string.IsNullOrWhiteSpace(visitorName))
+                    {
+                        <span class="visitor-name">(@visitorName)</span>
+                    }
+                    <button type="button" class="visitor-logout-btn" @onclick="ClearVisitorSession" title="Switch company or sign out" aria-label="Sign out as guest">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+            }
+            else
+            {
+                <a href="/" class="guest-signin-link" title="Sign in as Guest or Admin">Guest / Sign In</a>
+            }
+            <ThemeToggle />
+            <a class="admin-link" href="/admin/articles">Admin</a>
+        </div>
+    </header>
+
+    <NavMenu />
+
+    <main id="main-content">
+        <ErrorBoundary @ref="errorBoundary">
+            <ChildContent>
+                @Body
+            </ChildContent>
+            <ErrorContent>
+                <div class="not-found">
+                    Something went wrong loading this page. Try
+                    <a href="/helpdesk">going back to the Helpdesk home</a>,
+                    or refresh the page.
+                </div>
+            </ErrorContent>
+        </ErrorBoundary>
+    </main>
+</div>
+
+@code {
+    private bool sidebarOpen = true;
+    private string? visitorCompany;
+    private string? visitorName;
+    private ErrorBoundary? errorBoundary;
+
+    protected override void OnParametersSet() => errorBoundary?.Recover();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            visitorCompany = await JS.InvokeAsync<string>("getVisitorCompany");
+            visitorName = await JS.InvokeAsync<string>("getVisitorName");
+
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearVisitorSession()
+    {
+        await JS.InvokeVoidAsync("clearVisitorInfo");
+        visitorCompany = null;
+        visitorName = null;
+        Nav.NavigateTo("/");
+    }
+
+    private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+}

@@ -1,0 +1,525 @@
+@page "/admin/users"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject UserService UserService
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<h1>Admins</h1>
+<p class="admin-users-sub">Anyone on this list can sign in to this admin panel with their own username and password.</p>
+
+@if (errorMessage is not null)
+{
+    <p class="login-error">@errorMessage</p>
+}
+@if (statusMessage is not null)
+{
+    <p class="admin-users-status">@statusMessage</p>
+}
+
+@if (!CanManageUsers)
+{
+    <div class="role-info-banner viewer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>Access restricted: Administrator role required to view or manage user accounts. Redirecting...</span>
+    </div>
+}
+else if (users is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="role-info-banner @currentUserRole?.ToLower()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            @if (currentUserRole == "Viewer")
+            {
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            }
+            else
+            {
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9 12l2 2 4-4"></path>
+            }
+        </svg>
+        <span>Your role: <strong>@currentUserRole</strong> @GetRoleDescription(currentUserRole ?? "Viewer")</span>
+    </div>
+
+    <div class="table-scroll">
+    <table class="admin-table">
+        <colgroup>
+            <col style="width:13%" />
+            <col style="width:14%" />
+            <col style="width:19%" />
+            <col style="width:11%" />
+            <col style="width:9%" />
+            <col style="width:14%" />
+            <col style="width:11%" />
+            @if (CanManageUsers)
+            {
+                <col style="width:19%" />
+            }
+        </colgroup>
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th>Created</th>
+                @if (CanManageUsers)
+                {
+                    <th></th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var user in users)
+            {
+                <tr>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <input value="@editUsername" @oninput="e => editUsername = e.Value?.ToString() ?? string.Empty" />
+                        }
+                        else
+                        {
+                            <span class="category-name">@user.Username</span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <input value="@editFullName" @oninput="e => editFullName = e.Value?.ToString() ?? string.Empty" />
+                        }
+                        else
+                        {
+                            <span class="col-truncate" title="@user.FullName">@(user.FullName ?? "—")</span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <input value="@editEmail" @oninput="e => editEmail = e.Value?.ToString() ?? string.Empty" />
+                        }
+                        else
+                        {
+                            <span class="col-truncate" title="@user.Email">@(user.Email ?? "—")</span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <select value="@editRole" @onchange='e => editRole = e.Value?.ToString() ?? "Editor"'>
+                                @if (IsSuperAdminActor)
+                                {
+                                    <option value="SuperAdmin">Super Admin</option>
+                                }
+                                <option value="Admin">Admin</option>
+                                <option value="Editor">Editor</option>
+                                <option value="Viewer">Viewer</option>
+                            </select>
+                        }
+                        else
+                        {
+                            <span class="role-badge @GetRoleClass(user.Role)">@user.Role</span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <input type="checkbox" checked="@editIsActive" @onchange="e => editIsActive = (bool)e.Value!" />
+                        }
+                        else
+                        {
+                            <span class="@(user.IsActive ? "status-badge published" : "status-badge draft")">
+                                @(user.IsActive ? "Active" : "Inactive")
+                            </span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <span class="count">—</span>
+                        }
+                        else
+                        {
+                            <span class="count">@(user.LastLoginAt?.ToString("MMM d, yyyy HH:mm") ?? "Never")</span>
+                        }
+                    </td>
+                    <td>
+                        @if (editingId == user.Id && CanManageUsers)
+                        {
+                            <span class="count">@user.CreatedAt.ToString("MMM d, yyyy")</span>
+                        }
+                        else
+                        {
+                            <span class="count">@user.CreatedAt.ToString("MMM d, yyyy")</span>
+                        }
+                    </td>
+                    @if (CanManageUsers)
+                    {
+                        <td class="row-actions">
+                            @if (!CanModifyTarget(user))
+                            {
+                                <span class="count" title="Only a Super Admin can edit another Super Admin account.">🔒 Super Admin</span>
+                            }
+                            else if (editingId == user.Id)
+                            {
+                                <button type="button" class="btn-primary" @onclick="() => SaveUser(user.Id)">Save</button>
+                                <button type="button" class="link-muted" @onclick="CancelEdit">Cancel</button>
+                                <button type="button" class="btn-secondary" @onclick="() => ShowChangePassword(user.Id)">Change Password</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="link-muted" @onclick="() => StartEdit(user)">Edit</button>
+                                @if (user.IsPermanent)
+                                {
+                                    <span class="permanent-badge">Permanent</span>
+                                }
+                                @if (users.Count > 1 && !user.IsPermanent)
+                                {
+                                    <button type="button" class="link-danger" @onclick="() => Delete(user.Id, user.Username)">Remove</button>
+                                }
+                                @if (string.Equals(user.Username, currentUsername, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <span class="count">(you)</span>
+                                }
+                            }
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+
+    @if (CanManageUsers)
+    {
+        <div class="add-category-row admin-users-add">
+            <h3>Add New Admin</h3>
+            <div class="add-category-row-fields">
+                <input placeholder="Username" value="@newUsername" @oninput="e => newUsername = e.Value?.ToString() ?? string.Empty" class="w-sm" />
+                <input type="password" placeholder="Password (min 8 chars)" value="@newPassword" @oninput="e => newPassword = e.Value?.ToString() ?? string.Empty" class="w-sm" />
+                <input placeholder="Full Name" value="@newFullName" @oninput="e => newFullName = e.Value?.ToString() ?? string.Empty" class="w-sm" />
+                <input placeholder="Email" value="@newEmail" @oninput="e => newEmail = e.Value?.ToString() ?? string.Empty" class="w-sm" />
+                <select value="@newRole" @onchange='e => newRole = e.Value?.ToString() ?? "Editor"'>
+                    @if (IsSuperAdminActor)
+                    {
+                        <option value="SuperAdmin">Super Admin</option>
+                    }
+                    <option value="Admin">Admin</option>
+                    <option value="Editor">Editor</option>
+                    <option value="Viewer">Viewer</option>
+                </select>
+                <button type="button" class="btn-primary" @onclick="Add">+ Add admin</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="readonly-notice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>View-only mode: Your role (@currentUserRole) does not permit managing users.</span>
+        </div>
+    }
+}
+
+@if (changePasswordUserId.HasValue && CanManageUsers)
+{
+    <div class="modal-overlay" @onclick="CancelChangePassword">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Change Password</h3>
+                <button type="button" class="modal-close" @onclick="CancelChangePassword">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Set a new password for the selected user.</p>
+                <label class="field">
+                    <span>New Password</span>
+                    <input type="password" @bind="changePasswordNew" minlength="8" />
+                </label>
+                <label class="field">
+                    <span>Confirm Password</span>
+                    <input type="password" @bind="changePasswordConfirm" minlength="8" />
+                </label>
+                @if (changePasswordError != null)
+                {
+                    <p class="login-error">@changePasswordError</p>
+                }
+                <div class="form-actions">
+                    <button type="button" class="btn-primary" @onclick="SavePassword">Save</button>
+                    <button type="button" class="btn-secondary" @onclick="CancelChangePassword">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AdminUser>? users;
+    private string newUsername = "";
+    private string newPassword = "";
+    private string newFullName = "";
+    private string newEmail = "";
+    private string newRole = "Editor";
+    private string? errorMessage;
+    private string? statusMessage;
+    private string? currentUsername;
+    private string? currentUserRole;
+    private bool canManageUsers;
+
+    private int? editingId;
+    private string editUsername = "";
+    private string editFullName = "";
+    private string editEmail = "";
+    private string editRole = "Editor";
+    private bool editIsActive = true;
+
+    private int? changePasswordUserId;
+    private string changePasswordNew = "";
+    private string changePasswordConfirm = "";
+    private string? changePasswordError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        currentUsername = state.User.Identity?.Name;
+        currentUserRole = await UserService.GetUserRoleAsync(currentUsername);
+        canManageUsers = await PermissionService.IsAllowedAsync(currentUserRole, Permissions.UsersManage);
+
+        if (!CanManageUsers)
+        {
+            Nav.NavigateTo("/admin/articles");
+            return;
+        }
+
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        users = await UserService.GetAllAsync();
+    }
+
+    private bool CanManageUsers => canManageUsers;
+
+    /// <summary>Only an actual Super Admin may grant the Super Admin role, or edit,
+    /// demote, delete, or reset the password of an existing Super Admin account.
+    /// Without this, anyone with the "Manage Admins" permission (Admin role, by
+    /// default) could promote themselves to Super Admin — a permission that the
+    /// Roles &amp; Access matrix can never restrict — completely bypassing the
+    /// role/permission system. See PermissionService.IsAllowedAsync.</summary>
+    private bool IsSuperAdminActor => currentUserRole == "SuperAdmin";
+
+    private bool CanModifyTarget(AdminUser user) => IsSuperAdminActor || user.Role != "SuperAdmin";
+
+    private string GetRoleDescription(string role) => role switch
+    {
+        "SuperAdmin" => "(Full access including user management)",
+        "Admin" => "(Full access including user management)",
+        "Editor" => "(Can manage articles, categories, tags, feedback)",
+        "Viewer" => "(Read-only access to admin panel)",
+        _ => ""
+    };
+
+    private async Task Add()
+    {
+        if (!CanManageUsers) return;
+        
+        errorMessage = null;
+        statusMessage = null;
+
+        var username = newUsername.Trim();
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(newPassword))
+        {
+            errorMessage = "Enter a username and password.";
+            return;
+        }
+        if (newPassword.Length < 8)
+        {
+            errorMessage = "Password must be at least 8 characters.";
+            return;
+        }
+        if (newRole == "SuperAdmin" && !IsSuperAdminActor)
+        {
+            errorMessage = "Only a Super Admin can grant the Super Admin role.";
+            return;
+        }
+
+        var created = await UserService.CreateAsync(username, newPassword, newEmail, newFullName, newRole);
+        if (created is null)
+        {
+            errorMessage = $"\"{username}\" is already taken.";
+            return;
+        }
+
+        statusMessage = $"Added {username}.";
+        newUsername = "";
+        newPassword = "";
+        newFullName = "";
+        newEmail = "";
+        newRole = "Editor";
+        await Load();
+    }
+
+    private void StartEdit(AdminUser user)
+    {
+        if (!CanManageUsers || !CanModifyTarget(user)) return;
+        editingId = user.Id;
+        editUsername = user.Username;
+        editFullName = user.FullName ?? "";
+        editEmail = user.Email ?? "";
+        editRole = user.Role;
+        editIsActive = user.IsActive;
+    }
+
+    private void CancelEdit() => editingId = null;
+
+    private async Task SaveUser(int id)
+    {
+        if (!CanManageUsers) return;
+        
+        errorMessage = null;
+        statusMessage = null;
+
+        if (string.IsNullOrWhiteSpace(editUsername) || string.IsNullOrWhiteSpace(editRole))
+        {
+            errorMessage = "Username and role are required.";
+            return;
+        }
+
+        var target = users?.FirstOrDefault(u => u.Id == id);
+        if (target is not null && !CanModifyTarget(target))
+        {
+            errorMessage = "Only a Super Admin can edit a Super Admin account.";
+            editingId = null;
+            return;
+        }
+        if (editRole == "SuperAdmin" && !IsSuperAdminActor)
+        {
+            errorMessage = "Only a Super Admin can grant the Super Admin role.";
+            return;
+        }
+
+        var user = new AdminUser
+        {
+            Id = id,
+            Username = editUsername.Trim(),
+            FullName = editFullName.Trim(),
+            Email = editEmail.Trim(),
+            Role = editRole,
+            IsActive = editIsActive
+        };
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+        await UserService.UpdateUserAsync(user, username);
+
+        statusMessage = $"Updated {editUsername}.";
+        editingId = null;
+        await Load();
+    }
+
+    private async Task Delete(int id, string username)
+    {
+        if (!CanManageUsers) return;
+
+        var target = users?.FirstOrDefault(u => u.Id == id);
+        if (target is not null && !CanModifyTarget(target))
+        {
+            errorMessage = "Only a Super Admin can remove a Super Admin account.";
+            return;
+        }
+
+        errorMessage = null;
+        statusMessage = null;
+
+        var confirmed = await Confirm.ShowAsync("Remove admin?", $"Remove \"{username}\"? This can't be undone — they'll immediately lose access to this admin panel.");
+        if (!confirmed) return;
+
+        var ok = await UserService.DeleteAsync(id);
+        if (!ok)
+        {
+            errorMessage = "Can't remove the last remaining admin, or a permanent account.";
+            return;
+        }
+
+        await Load();
+    }
+
+    private void ShowChangePassword(int userId)
+    {
+        if (!CanManageUsers) return;
+        var target = users?.FirstOrDefault(u => u.Id == userId);
+        if (target is not null && !CanModifyTarget(target)) return;
+        changePasswordUserId = userId;
+        changePasswordNew = "";
+        changePasswordConfirm = "";
+        changePasswordError = null;
+    }
+
+    private void CancelChangePassword()
+    {
+        changePasswordUserId = null;
+        changePasswordNew = "";
+        changePasswordConfirm = "";
+        changePasswordError = null;
+    }
+
+    private async Task SavePassword()
+    {
+        if (!CanManageUsers) return;
+        
+        changePasswordError = null;
+
+        if (string.IsNullOrWhiteSpace(changePasswordNew) || changePasswordNew.Length < 8)
+        {
+            changePasswordError = "Password must be at least 8 characters.";
+            return;
+        }
+        if (changePasswordNew != changePasswordConfirm)
+        {
+            changePasswordError = "Passwords do not match.";
+            return;
+        }
+
+        if (changePasswordUserId.HasValue)
+        {
+            var target = users?.FirstOrDefault(u => u.Id == changePasswordUserId.Value);
+            if (target is not null && !CanModifyTarget(target))
+            {
+                changePasswordError = "Only a Super Admin can reset a Super Admin account's password.";
+                return;
+            }
+
+            await UserService.ChangePasswordAsync(changePasswordUserId.Value, changePasswordNew);
+            statusMessage = "Password updated.";
+            CancelChangePassword();
+            await Load();
+        }
+    }
+
+    private string GetRoleClass(string role) => role switch
+    {
+        "SuperAdmin" => "role-superadmin",
+        "Admin" => "role-admin",
+        "Editor" => "role-editor",
+        "Viewer" => "role-viewer",
+        _ => ""
+    };
+}

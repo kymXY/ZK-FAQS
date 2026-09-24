@@ -1,0 +1,135 @@
+@page "/category/{Slug}"
+@inject ArticleService ArticleService
+@inject NavigationManager Nav
+@using CategoryModel = FaqCms.Models.Category
+@using ArticleModel = FaqCms.Models.Article
+@implements IDisposable
+
+@if (category is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="article-layout no-media">
+        <div class="article-body">
+            <p class="crumb">
+                <a href="/" class="crumb-home">Helpdesk</a>
+                <span class="sep">/</span>
+                <span class="here">@category.Name</span>
+            </p>
+
+            <div class="title-row">
+                <div class="category-header">
+                    <span class="category-icon">@category.Icon</span>
+                    <div>
+                        <h1>@category.Name</h1>
+                        @if (!string.IsNullOrWhiteSpace(category.Description))
+                        {
+                            <p class="lede">@category.Description</p>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (category.SubCategories.Count > 0)
+            {
+                @if (articles?.Any() == true)
+                {
+                    <h2 class="subcategory-heading">General</h2>
+                    <div class="articles-grid">
+                        @foreach (var article in articles)
+                        {
+                            @RenderArticleCard(article)
+                        }
+                    </div>
+                }
+                @foreach (var sub in category.SubCategories.Where(s => s.IsVisible))
+                {
+                    var subArticles = subCategoryArticles.GetValueOrDefault(sub.Id) ?? new();
+                    @if (subArticles.Count > 0)
+                    {
+                        <h2 class="subcategory-heading">@sub.Icon @sub.Name</h2>
+                        @if (!string.IsNullOrWhiteSpace(sub.Description))
+                        {
+                            <p class="lede">@sub.Description</p>
+                        }
+                        <div class="articles-grid">
+                            @foreach (var article in subArticles)
+                            {
+                                @RenderArticleCard(article)
+                            }
+                        </div>
+                    }
+                }
+                @if (articles?.Any() != true && !subCategoryArticles.Any(kv => kv.Value.Count > 0))
+                {
+                    <p class="empty-state">No articles in this category yet.</p>
+                }
+            }
+            else if (articles?.Any() == true)
+            {
+                <div class="articles-grid">
+                    @foreach (var article in articles)
+                    {
+                        @RenderArticleCard(article)
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="empty-state">No articles in this category yet.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+    private CategoryModel? category;
+    private List<ArticleModel>? articles;
+    private Dictionary<int, List<ArticleModel>> subCategoryArticles = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        category = await ArticleService.GetCategoryBySlugAsync(Slug);
+        if (category != null)
+        {
+            articles = await ArticleService.GetArticlesByCategoryAsync(category.Id);
+            subCategoryArticles.Clear();
+            foreach (var sub in category.SubCategories)
+            {
+                subCategoryArticles[sub.Id] = await ArticleService.GetArticlesByCategoryAsync(sub.Id);
+            }
+        }
+    }
+
+    private RenderFragment RenderArticleCard(ArticleModel article) => __builder =>
+    {
+        <article class="article-card">
+            @if (article.IsFeatured)
+            {
+                <span class="featured-badge">Featured</span>
+            }
+            <a href="@($"/article/{article.Id}")" class="article-card-link">
+                <h3>@article.Title</h3>
+                <p>@article.Summary</p>
+            </a>
+            @if (article.ArticleTags?.Any() == true)
+            {
+                <div class="card-tags">
+                    @foreach (var at in article.ArticleTags.Take(3))
+                    {
+                        <span class="tag" style="--tag-color: @at.Tag?.Color">@at.Tag?.Name</span>
+                    }
+                </div>
+            }
+            <div class="card-meta">
+                <span class="updated">Updated @article.UpdatedAt.ToString("MMM d, yyyy")</span>
+                <span class="views">@article.ViewCount views</span>
+            </div>
+        </article>
+    };
+
+    public void Dispose() { }
+}

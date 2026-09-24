@@ -1,0 +1,165 @@
+@inject ArticleService ArticleService
+@inject IJSRuntime JS
+
+<div class="feedback-block">
+    @if (submitted)
+    {
+        <div class="feedback-thanks">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="thanks-icon">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9 12l2 2 4-4"></path>
+            </svg>
+            <p class="thanks-title">Thanks for your feedback!</p>
+            <p class="thanks-sub">Your response helps us improve our guides.</p>
+        </div>
+    }
+    else if (showVisitorInfo)
+    {
+        <div class="feedback-visitor-form">
+            <div class="feedback-form-header">
+                <p class="feedback-question">@GetRatingLabel(selectedRating)</p>
+                <span class="selected-rating-badge @GetRatingClass(selectedRating)">@GetRatingBadgeText(selectedRating)</span>
+            </div>
+            <p class="feedback-hint">Please provide your details below to submit feedback:</p>
+            
+            <div class="field">
+                <label>
+                    <span>Company Name <span class="required-tag">*</span></span>
+                    <input type="text" @bind="company" placeholder="e.g. Acme Corp" class="feedback-input @(showCompanyError ? "input-error" : "")" maxlength="200" required />
+                    @if (showCompanyError) 
+                    { 
+                        <span class="field-error">Company name is required.</span> 
+                    }
+                </label>
+            </div>
+            
+            <div class="field">
+                <label>
+                    <span>Your Name <span class="optional-tag">(optional)</span></span>
+                    <input type="text" @bind="visitorName" placeholder="e.g. Jane Doe" class="feedback-input" maxlength="200" />
+                </label>
+            </div>
+            
+            <div class="field">
+                <label>
+                    <span>Additional Feedback <span class="optional-tag">(optional)</span></span>
+                    <textarea @bind="comment" placeholder="Tell us how we can improve this guide..." rows="3" class="feedback-input" maxlength="2000"></textarea>
+                </label>
+            </div>
+            
+            <div class="feedback-actions">
+                <button type="button" class="btn-secondary" @onclick="CancelVisitorInfo">Back</button>
+                <button type="button" class="btn-primary" @onclick="SubmitVisitorInfo">Submit Feedback</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="feedback-question">Is this helpful?</p>
+        <div class="feedback-faces">
+            <button type="button" class="face-btn" @onclick='() => ShowVisitorInfo(FeedbackRating.Sad)' aria-label="Not helpful">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6">
+                    <circle cx="12" cy="12" r="9.4"></circle>
+                    <path d="M8.5 15.6c1-1.3 2.2-2 3.5-2s2.5.7 3.5 2" stroke-linecap="round"></path>
+                    <circle cx="9" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                    <circle cx="15" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                </svg>
+                <span>Not helpful</span>
+            </button>
+            <button type="button" class="face-btn" @onclick='() => ShowVisitorInfo(FeedbackRating.Ok)' aria-label="Somewhat helpful">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6">
+                    <circle cx="12" cy="12" r="9.4"></circle>
+                    <line x1="8.3" y1="14.8" x2="15.7" y2="14.8" stroke-linecap="round"></line>
+                    <circle cx="9" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                    <circle cx="15" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                </svg>
+                <span>Okay</span>
+            </button>
+            <button type="button" class="face-btn" @onclick='() => ShowVisitorInfo(FeedbackRating.VerySatisfied)' aria-label="Very helpful">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6">
+                    <circle cx="12" cy="12" r="9.4"></circle>
+                    <path d="M8 13.8c1.2 1.7 2.7 2.6 4 2.6s2.8-.9 4-2.6" stroke-linecap="round"></path>
+                    <circle cx="9" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                    <circle cx="15" cy="9.6" r="1" fill="currentColor" stroke="none"></circle>
+                </svg>
+                <span>Very helpful</span>
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ArticleId { get; set; }
+    private bool submitted;
+    private bool showVisitorInfo;
+    private FeedbackRating selectedRating;
+    private string company = "";
+    private string visitorName = "";
+    private string comment = "";
+    private bool showCompanyError;
+
+    private async Task ShowVisitorInfo(FeedbackRating rating)
+    {
+        selectedRating = rating;
+        showVisitorInfo = true;
+        showCompanyError = false;
+
+        // Auto pre-fill from stored session
+        var storedCompany = await JS.InvokeAsync<string>("getVisitorCompany");
+        var storedName = await JS.InvokeAsync<string>("getVisitorName");
+
+        company = storedCompany ?? "";
+        visitorName = storedName ?? "";
+        comment = "";
+    }
+
+    private void CancelVisitorInfo()
+    {
+        showVisitorInfo = false;
+        selectedRating = 0;
+        comment = "";
+        showCompanyError = false;
+    }
+
+    private async Task SubmitVisitorInfo()
+    {
+        showCompanyError = string.IsNullOrWhiteSpace(company);
+        if (showCompanyError) return;
+
+        var cleanCompany = company.Trim();
+        var cleanName = string.IsNullOrWhiteSpace(visitorName) ? null : visitorName.Trim();
+
+        await ArticleService.AddFeedbackAsync(ArticleId, selectedRating, comment?.Trim(), 
+            userAgent: null, ipAddress: null, company: cleanCompany, name: cleanName);
+
+        // Update stored visitor info if changed
+        await JS.InvokeVoidAsync("setVisitorInfo", cleanCompany, cleanName ?? "");
+
+        submitted = true;
+        showVisitorInfo = false;
+    }
+
+    private string GetRatingLabel(FeedbackRating rating) => rating switch
+    {
+        FeedbackRating.Sad => "Sorry to hear that!",
+        FeedbackRating.Ok => "Thanks for your feedback!",
+        FeedbackRating.VerySatisfied => "Awesome! Glad it helped.",
+        _ => ""
+    };
+
+    private string GetRatingBadgeText(FeedbackRating rating) => rating switch
+    {
+        FeedbackRating.Sad => "😞 Not helpful",
+        FeedbackRating.Ok => "😐 Okay",
+        FeedbackRating.VerySatisfied => "🙂 Very helpful",
+        _ => ""
+    };
+
+    private string GetRatingClass(FeedbackRating rating) => rating switch
+    {
+        FeedbackRating.Sad => "rating-sad",
+        FeedbackRating.Ok => "rating-ok",
+        FeedbackRating.VerySatisfied => "rating-happy",
+        _ => ""
+    };
+}

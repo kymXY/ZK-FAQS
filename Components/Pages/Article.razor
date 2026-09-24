@@ -1,0 +1,354 @@
+@page "/article/{Id:int}"
+@page "/article/{Slug}"
+@inject ArticleService ArticleService
+@inject NavigationManager Nav
+@using ArticleModel = FaqCms.Models.Article
+@implements IDisposable
+
+@if (loadError is not null)
+{
+    <div style="max-width:32rem;margin:4rem auto;text-align:center;padding:0 1rem;">
+        <p>@loadError</p>
+        <button type="button" @onclick="Retry" class="btn-primary">Try again</button>
+    </div>
+}
+else if (article is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    var steps = OrderedSteps;
+
+    <div class="article-layout @(HasStepMedia ? "" : "no-media")">
+        <div class="article-body">
+            <p class="crumb">
+                <a href="/helpdesk" class="crumb-home">Helpdesk</a>
+                <span class="sep">/</span>
+                @if (article.Category != null)
+                {
+                    <a href="@($"/category/{article.Category.Slug}")" class="crumb-category">@article.Category.Name</a>
+                    <span class="sep">/</span>
+                }
+                <span class="here">@article.Title</span>
+            </p>
+
+            <div class="title-row">
+                <h1>@article.Title</h1>
+                <div class="title-meta">
+                    @if (article.ArticleTags?.Any(at => at.Tag != null) == true)
+                    {
+                        <div class="tags-inline">
+                            @foreach (var at in article.ArticleTags!.Where(at => at.Tag != null))
+                            {
+                                <span class="tag" style="--tag-color: @at.Tag!.Color">@at.Tag!.Name</span>
+                            }
+                        </div>
+                    }
+                    <span class="updated">Updated @article.UpdatedAt.ToString("MMM d, yyyy")</span>
+                </div>
+            </div>
+
+            @if (steps.Any())
+            {
+                <p class="article-at-a-glance">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    <span><strong>@steps.Count step@(steps.Count == 1 ? "" : "s")</strong> to complete this@(TotalMinutes > 0 ? $" · about {TotalMinutes} min" : "")</span>
+                </p>
+            }
+
+            <p class="lede">@article.Summary</p>
+
+            @if (!string.IsNullOrWhiteSpace(article.VideoUrl))
+            {
+                <div class="demo-block">
+                    <div class="demo-label">
+                        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2"></rect></svg>
+                        Watch: @article.Title
+                    </div>
+                    @if (VideoEmbedHelper.IsUploadedFile(article.VideoUrl))
+                    {
+                        <div class="video-frame">
+                            <video src="@article.VideoUrl" controls class="media-fill"></video>
+                        </div>
+                    }
+                    else if (VideoEmbedHelper.IsLikelySharePointShareLink(article.VideoUrl!))
+                    {
+                        @* A SharePoint "Copy link" URL refuses to be framed, so rendering an
+                           iframe here only ever produced a tall grey "refused to connect"
+                           box. Show a deliberate card with a working way out instead. *@
+                        <div class="video-unavailable">
+                            <div class="video-unavailable-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                            </div>
+                            <div class="video-unavailable-text">
+                                <strong>This video opens in SharePoint</strong>
+                                <span>SharePoint won't play inside the Helpdesk, so it opens in a new tab instead.</span>
+                            </div>
+                            <a href="@article.VideoUrl" target="_blank" rel="noopener" class="video-open-btn">
+                                Open video
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+                            </a>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="video-frame">
+                            <iframe src="@VideoEmbedHelper.ToEmbedUrl(article.VideoUrl!)" title="@article.Title" allowfullscreen class="media-fill"></iframe>
+                        </div>
+                        <a href="@article.VideoUrl" target="_blank" rel="noopener" class="video-fallback-link">
+                            Video not showing? Open it in a new tab →
+                        </a>
+                    }
+                </div>
+            }
+
+            @* When no step carries a screenshot there is no walkthrough rail, so the
+               steps stay in the reading column and show their pictures inline. *@
+            @if (!HasStepMedia && steps.Any())
+            {
+                <StepList Steps="steps" ActiveIndex="ActiveIndex" OnSelect="SetActiveStep" Inline="true" />
+            }
+
+        </div>
+
+        @if (HasStepMedia)
+        {
+            <aside class="step-media-rail" aria-label="Step-by-step walkthrough">
+                @* tabindex makes the panel focusable so the arrow keys have somewhere to
+                   land; without it the only way to change step was the mouse. *@
+                <div class="step-viewer" tabindex="0" @onkeydown="HandleKey">
+                    <div class="step-nav">
+                        <button type="button" class="step-nav-arrow" @onclick="Prev" disabled="@(!CanPrev)" aria-label="Previous step" title="Previous step">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                        </button>
+                        <span class="step-nav-label">
+                            <span class="step-nav-count">Step @(ActiveIndex + 1) of @steps.Count</span>
+                            <span class="step-nav-title">@ActiveStep?.Title</span>
+                        </span>
+                        <button type="button" class="step-nav-arrow" @onclick="Next" disabled="@(!CanNext)" aria-label="Next step" title="Next step">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="step-viewer-stage">
+                        @if (!string.IsNullOrWhiteSpace(ActiveStep?.ImageUrl))
+                        {
+                            <div class="video-frame photo-frame clickable" @key="ActiveStep?.Id" @onclick="() => OpenLightbox(ActiveStep?.ImageUrl)">
+                                @* onerror used to just hide the image, leaving an unexplained
+                                   empty frame. Flag the frame instead so the note below shows. *@
+                                <img src="@ActiveStep!.ImageUrl"
+                                     alt="@(ActiveStep.ImageAlt ?? ActiveStep.Title)"
+                                     loading="lazy"
+                                     onerror="this.closest('.photo-frame').classList.add('img-missing')" />
+                                <span class="stage-missing">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                                    This screenshot couldn't be loaded
+                                </span>
+                                <span class="expand-hint">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                                    Click to view full size
+                                </span>
+                            </div>
+                        }
+                        else
+                        {
+                            @* Keeps the panel from collapsing on steps that have no
+                               screenshot, which used to make everything below it jump. *@
+                            <div class="video-frame step-stage-empty">
+                                <span class="media-placeholder">No screenshot for this step</span>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="step-viewer-foot">
+                        <div class="step-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@steps.Count" aria-valuenow="@(ActiveIndex + 1)" aria-label="Walkthrough progress">
+                            <span class="step-progress-fill" style="width:@ProgressPercent%"></span>
+                        </div>
+                        <p class="step-hint">
+                            <kbd>←</kbd><kbd>→</kbd>
+                            <span>to move between steps</span>
+                        </p>
+                    </div>
+                </div>
+
+                <StepList Steps="steps" ActiveIndex="ActiveIndex" OnSelect="SetActiveStep" />
+            </aside>
+        }
+
+        @* Feedback and related links are a third grid child rather than the tail of
+           .article-body: stacked on a phone the rail sits between them, so leaving
+           them inside the body put "Was this helpful?" above the walkthrough. *@
+        <div class="article-foot">
+            <FeedbackWidget ArticleId="@article.Id" />
+
+            @if (relatedArticles?.Any() == true)
+            {
+                <section class="related-articles">
+                    <h2>Related Articles</h2>
+                    <div class="related-grid">
+                        @foreach (var related in relatedArticles)
+                        {
+                            <a href="@($"/article/{related.Id}")" class="related-card">
+                                <span class="related-category">@related.Category?.Name</span>
+                                <h3>@related.Title</h3>
+                                <p>@related.Summary</p>
+                            </a>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+    </div>
+
+    @if (lightboxImage is not null)
+    {
+        <div class="lightbox-overlay" @onclick="CloseLightbox">
+            <button type="button" class="lightbox-close" @onclick="CloseLightbox" @onclick:stopPropagation="true" aria-label="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <img src="@lightboxImage" class="lightbox-image" @onclick:stopPropagation="true" alt="Full size view" />
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [Parameter] public string? Slug { get; set; }
+    private ArticleModel? article;
+    private string? loadError;
+    private int? activeStepId;
+    private string? lightboxImage;
+    private List<ArticleModel>? relatedArticles;
+
+    private List<FaqCms.Models.ArticleStep> OrderedSteps => article?.Steps.OrderBy(s => s.SortOrder).ToList() ?? new();
+    private FaqCms.Models.ArticleStep? ActiveStep => OrderedSteps.FirstOrDefault(s => s.Id == activeStepId);
+    private bool HasStepMedia => article is not null && article.Steps.Any(s => !string.IsNullOrWhiteSpace(s.ImageUrl));
+    private int TotalMinutes => OrderedSteps.Sum(s => s.EstimatedMinutes ?? 0);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loadError = null;
+
+        // Loading an article makes 2-3 fresh database round trips right as this tab's
+        // circuit spins up (the article itself, related articles, the view count bump).
+        // Before this, if any one of those got stuck — a slow/blocked database, the
+        // exact kind of thing that used to require an IIS reset — this page would just
+        // sit on "Loading…" forever, then eventually surface as Blazor's generic
+        // "An unhandled error has occurred" banner once something finally timed out.
+        // Capping it means a stuck load fails fast with a message that actually explains
+        // what happened, and gives a way to retry.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            if (Id.HasValue)
+            {
+                article = await ArticleService.GetArticleAsync(Id.Value).WaitAsync(cts.Token);
+            }
+            else if (!string.IsNullOrWhiteSpace(Slug))
+            {
+                article = await ArticleService.GetArticleBySlugAsync(Slug).WaitAsync(cts.Token);
+            }
+            else
+            {
+                var firstId = await GetFirstArticleIdAsync().WaitAsync(cts.Token);
+                article = firstId == 0 ? null : await ArticleService.GetArticleAsync(firstId).WaitAsync(cts.Token);
+            }
+
+            if (article != null)
+            {
+                activeStepId = OrderedSteps.FirstOrDefault()?.Id;
+                relatedArticles = await ArticleService.GetRelatedArticlesAsync(article.Id).WaitAsync(cts.Token);
+
+                // Bumping the view count is a nice-to-have, not something the reader is
+                // waiting on — run it in the background so a slow/stuck write there can
+                // never delay or fail showing the article itself.
+                _ = IncrementViewCountSafelyAsync(article.Id);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            loadError = "This article is taking too long to load — the database may be slow right now.";
+        }
+        catch (Exception)
+        {
+            loadError = "Something went wrong loading this article.";
+        }
+    }
+
+    private async Task IncrementViewCountSafelyAsync(int articleId)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await ArticleService.IncrementViewCountAsync(articleId).WaitAsync(cts.Token);
+        }
+        catch
+        {
+            // Best-effort only — a missed view count bump should never surface to the reader.
+        }
+    }
+
+    private void Retry() => Nav.NavigateTo(Nav.Uri, forceLoad: true);
+
+    private void SetActiveStep(int id) => activeStepId = id;
+
+    private void HandleKey(KeyboardEventArgs e)
+    {
+        if (lightboxImage is not null)
+        {
+            if (e.Key == "Escape") CloseLightbox();
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case "ArrowLeft": Prev(); break;
+            case "ArrowRight": Next(); break;
+            case "Home": activeStepId = OrderedSteps.FirstOrDefault()?.Id; break;
+            case "End": activeStepId = OrderedSteps.LastOrDefault()?.Id; break;
+        }
+    }
+
+    private void OpenLightbox(string? url)
+    {
+        if (!string.IsNullOrWhiteSpace(url)) lightboxImage = url;
+    }
+
+    private void CloseLightbox() => lightboxImage = null;
+
+    private int ActiveIndex => OrderedSteps.FindIndex(s => s.Id == activeStepId);
+    private bool CanPrev => ActiveIndex > 0;
+    private bool CanNext => ActiveIndex >= 0 && ActiveIndex < OrderedSteps.Count - 1;
+
+    private int ProgressPercent
+    {
+        get
+        {
+            var total = OrderedSteps.Count;
+            if (total == 0) return 0;
+            var position = ActiveIndex < 0 ? 0 : ActiveIndex + 1;
+            return (int)Math.Round(position * 100d / total);
+        }
+    }
+
+    private void Prev()
+    {
+        var idx = ActiveIndex;
+        if (idx > 0) activeStepId = OrderedSteps[idx - 1].Id;
+    }
+
+    private void Next()
+    {
+        var idx = ActiveIndex;
+        if (idx >= 0 && idx < OrderedSteps.Count - 1) activeStepId = OrderedSteps[idx + 1].Id;
+    }
+
+    private async Task<int> GetFirstArticleIdAsync()
+    {
+        var all = await ArticleService.GetPublishedArticlesAsync();
+        return all.FirstOrDefault()?.Id ?? 0;
+    }
+
+    public void Dispose() { }
+}

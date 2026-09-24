@@ -1,0 +1,66 @@
+@* Both the reading column (articles with no screenshots) and the walkthrough rail
+   render the same step list, so it lives here instead of being written twice.
+   Each row is a real <button>: the rows were clickable <li>s, which meant they
+   could not be reached by keyboard or announced as controls. *@
+
+<ol class="steps @(Inline ? "steps-inline" : "steps-rail")">
+    @for (var i = 0; i < Steps.Count; i++)
+    {
+        var step = Steps[i];
+        var index = i;
+        var state = index < ActiveIndex ? "is-done" : (index == ActiveIndex ? "is-active" : "");
+        <li class="@state">
+            <button type="button"
+                    class="step-row"
+                    aria-current="@(index == ActiveIndex ? "step" : null)"
+                    @onclick="() => OnSelect.InvokeAsync(step.Id)">
+                <span class="step-body">
+                    <span class="step-title">@step.Title</span>
+                    @if (step.EstimatedMinutes.HasValue || step.IsOptional)
+                    {
+                        <span class="step-labels">
+                            @if (step.EstimatedMinutes.HasValue)
+                            {
+                                <span class="step-duration">~@step.EstimatedMinutes min</span>
+                            }
+                            @if (step.IsOptional)
+                            {
+                                <span class="step-optional">Optional</span>
+                            }
+                        </span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(step.Description))
+                    {
+                        <span class="step-description">@step.Description</span>
+                    }
+                    @if (Inline && !string.IsNullOrWhiteSpace(step.ImageUrl))
+                    {
+                        <span class="step-inline-media">
+                            <img src="@step.ImageUrl" alt="@(step.ImageAlt ?? step.Title)" loading="lazy" />
+                        </span>
+                    }
+                </span>
+                @if (!Inline)
+                {
+                    <span class="step-row-cue" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </span>
+                }
+            </button>
+        </li>
+    }
+</ol>
+
+@code {
+    [Parameter, EditorRequired] public List<FaqCms.Models.ArticleStep> Steps { get; set; } = new();
+
+    /// <summary>Index of the step currently shown in the walkthrough panel. Everything
+    /// before it renders as already covered, so the list reads as progress.</summary>
+    [Parameter] public int ActiveIndex { get; set; } = -1;
+
+    [Parameter] public EventCallback<int> OnSelect { get; set; }
+
+    /// <summary>True when the list is the main content (no screenshots anywhere in the
+    /// article, so there is no rail); pictures then render underneath each step.</summary>
+    [Parameter] public bool Inline { get; set; }
+}

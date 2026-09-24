@@ -1,0 +1,244 @@
+@page "/admin/feedback"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject IDbContextFactory<FaqCms.Data.AppDbContext> DbFactory
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+@inject UserService UserService
+@inject PermissionService PermissionService
+@inject ConfirmService Confirm
+
+<div class="admin-header-row">
+    <div>
+        <h1>Feedback</h1>
+        <p class="admin-users-sub">"Is this helpful?" responses with comments and visitor information.</p>
+    </div>
+    @if (isReadOnly)
+    {
+        <span class="readonly-pill">Read-Only Viewer</span>
+    }
+</div>
+
+<div class="feedback-tabs">
+    <button class="tab-btn @(activeTab == "summary" ? "active" : "")" @onclick='() => activeTab = "summary"'>Summary by Category</button>
+    <button class="tab-btn @(activeTab == "details" ? "active" : "")" @onclick='() => activeTab = "details"'>All Responses (@(allFeedback?.Count ?? 0))</button>
+</div>
+
+@if (activeTab == "summary")
+{
+    @if (summary is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (!summary.Any())
+    {
+        <p>No categories yet.</p>
+    }
+    else
+    {
+        <table class="feedback-table">
+            <thead>
+                <tr>
+                    <th>Module</th>
+                    <th>Responses</th>
+                    <th>😞 Sad</th>
+                    <th>😐 Ok</th>
+                    <th>🙂 Very satisfied</th>
+                    <th>Satisfaction</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in summary)
+                {
+                    <tr>
+                        <td>@row.CategoryName</td>
+                        <td>@row.Total</td>
+                        <td>@row.Sad</td>
+                        <td>@row.Ok</td>
+                        <td>@row.VerySatisfied</td>
+                        <td>
+                            @if (row.Total == 0)
+                            {
+                                <span class="count">No data yet</span>
+                            }
+                            else
+                            {
+                                <div class="satisfaction-bar">
+                                    <div class="satisfaction-fill" style="width:@(row.SatisfactionPercent)%"></div>
+                                </div>
+                                <span>@(row.SatisfactionPercent)%</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    @if (allFeedback is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (!allFeedback.Any())
+    {
+        <p>No feedback yet.</p>
+    }
+    else
+    {
+        <div class="audit-filters">
+            <input type="text" placeholder="Search company, visitor, comment, article..." @bind="searchQuery" @bind:event="oninput" class="filter-input filter-input-wide" />
+            <select class="filter-select" @bind="selectedRatingFilter">
+                <option value="">All Ratings</option>
+                <option value="Sad">😞 Not helpful</option>
+                <option value="Ok">😐 Okay</option>
+                <option value="VerySatisfied">🙂 Very helpful</option>
+            </select>
+        </div>
+
+        <div class="table-scroll">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Article</th>
+                    <th>Company</th>
+                    <th>Visitor</th>
+                    <th>Rating</th>
+                    <th>Comment</th>
+                    <th>Public</th>
+                    <th>Date</th>
+                    @if (!isReadOnly)
+                    {
+                        <th></th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var fb in FilteredFeedback)
+                {
+                    <tr>
+                        <td>
+                            <a href="@($"/article/{fb.Article?.Id}")" target="_blank">@fb.Article?.Title</a>
+                        </td>
+                        <td>
+                            <strong>@(string.IsNullOrWhiteSpace(fb.Company) ? "—" : fb.Company)</strong>
+                        </td>
+                        <td>
+                            <span>@(string.IsNullOrWhiteSpace(fb.Name) ? "Anonymous" : fb.Name)</span>
+                        </td>
+                        <td><span class="rating-badge @GetRatingClass(fb.Rating)">@fb.Rating</span></td>
+                        <td class="col-description">@(fb.Comment ?? "—")</td>
+                        <td>
+                            <input type="checkbox" checked="@fb.IsPublic" disabled="@isReadOnly" @onchange="e => TogglePublic(fb.Id, (bool)e.Value!)" title="@(isReadOnly ? "Read-only access" : "Toggle public visibility")" />
+                        </td>
+                        <td>@fb.CreatedAt.ToString("MMM d, yyyy HH:mm")</td>
+                        @if (!isReadOnly)
+                        {
+                            <td class="row-actions">
+                                <button type="button" class="link-danger" @onclick="() => DeleteFeedback(fb.Id)">Delete</button>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+}
+
+@code {
+    private List<CategoryFeedbackSummary>? summary;
+    private List<ArticleFeedback>? allFeedback;
+    private string activeTab = "summary";
+    private string searchQuery = "";
+    private string selectedRatingFilter = "";
+    private bool isReadOnly = true;
+
+    private IEnumerable<ArticleFeedback> FilteredFeedback
+    {
+        get
+        {
+            if (allFeedback is null) return Enumerable.Empty<ArticleFeedback>();
+
+            var list = allFeedback.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(selectedRatingFilter))
+            {
+                list = list.Where(f => f.Rating.ToString() == selectedRatingFilter);
+            }
+
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+            {
+                var q = searchQuery.Trim().ToLower();
+                list = list.Where(f => 
+                    (f.Company != null && f.Company.ToLower().Contains(q)) ||
+                    (f.Name != null && f.Name.ToLower().Contains(q)) ||
+                    (f.Comment != null && f.Comment.ToLower().Contains(q)) ||
+                    (f.Article != null && f.Article.Title.ToLower().Contains(q)));
+            }
+
+            return list;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name;
+        var role = await UserService.GetUserRoleAsync(username);
+
+        isReadOnly = !await PermissionService.IsAllowedAsync(role, Permissions.FeedbackManage);
+
+        summary = await ArticleService.GetFeedbackSummaryByCategoryAsync();
+        allFeedback = await GetAllFeedbackAsync();
+    }
+
+    private async Task<List<ArticleFeedback>> GetAllFeedbackAsync()
+    {
+        using var db = DbFactory.CreateDbContext();
+        return await db.ArticleFeedbacks
+            .Include(f => f.Article).ThenInclude(a => a!.Category)
+            .OrderByDescending(f => f.CreatedAt)
+            .ToListAsync();
+    }
+
+    private async Task TogglePublic(int feedbackId, bool isPublic)
+    {
+        if (isReadOnly) return;
+
+        using var db = DbFactory.CreateDbContext();
+        var fb = await db.ArticleFeedbacks.FindAsync(feedbackId);
+        if (fb != null)
+        {
+            fb.IsPublic = isPublic;
+            await db.SaveChangesAsync();
+        }
+        allFeedback = await GetAllFeedbackAsync();
+    }
+
+    private async Task DeleteFeedback(int feedbackId)
+    {
+        if (isReadOnly) return;
+
+        var confirmed = await Confirm.ShowAsync("Delete feedback?", "Delete this feedback entry? This can't be undone.");
+        if (!confirmed) return;
+
+        using var db = DbFactory.CreateDbContext();
+        var fb = await db.ArticleFeedbacks.FindAsync(feedbackId);
+        if (fb != null)
+        {
+            db.ArticleFeedbacks.Remove(fb);
+            await db.SaveChangesAsync();
+        }
+        allFeedback = await GetAllFeedbackAsync();
+    }
+
+    private string GetRatingClass(FeedbackRating rating) => rating switch
+    {
+        FeedbackRating.Sad => "rating-sad",
+        FeedbackRating.Ok => "rating-ok",
+        FeedbackRating.VerySatisfied => "rating-happy",
+        _ => ""
+    };
+}

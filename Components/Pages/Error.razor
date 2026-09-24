@@ -1,0 +1,41 @@
+@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Error</PageTitle>
+
+<div class="admin-header-row">
+    <h1>Something went wrong</h1>
+</div>
+
+<p>An error occurred while processing your request.</p>
+
+@if (ShowRequestId)
+{
+    <p>
+        <strong>Request ID:</strong> <code>@RequestId</code>
+    </p>
+}
+
+<p>
+    The full exception is in the server's stdout log
+    (<code>logs\stdout_*.log</code> next to <code>web.config</code> when
+    <code>stdoutLogEnabled</code> is <code>true</code>) or in Windows Event
+    Viewer under Application, source <code>IIS AspNetCoreModuleV2</code>.
+</p>
+
+@code {
+    // This page did not exist in the project at all — Program.cs's
+    // app.UseExceptionHandler("/Error", ...) was redirecting every unhandled
+    // exception to a route with nothing behind it. That second failure is
+    // what produced the blank, unbranded "HTTP ERROR 500" with no detail:
+    // IIS was masking a missing-page error on top of the real one. This
+    // restores the standard page so the actual error surfaces instead.
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

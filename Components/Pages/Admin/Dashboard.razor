@@ -1,0 +1,158 @@
+@page "/admin"
+@page "/admin/dashboard"
+@layout FaqCms.Components.Layout.AdminLayout
+@attribute [Authorize]
+@inject ArticleService ArticleService
+@inject UserService UserService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
+
+<div class="admin-header-row">
+    <h1>Dashboard</h1>
+</div>
+
+@if (stats is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">@stats.TotalArticles</div>
+            <div class="stat-label">Total Articles</div>
+            <div class="stat-sublabel">@stats.PublishedArticles published · @stats.DraftArticles drafts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">@stats.TotalCategories</div>
+            <div class="stat-label">Categories</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">@stats.TotalFeedback</div>
+            <div class="stat-label">Feedback Responses</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">@stats.TotalViews.ToString("N0")</div>
+            <div class="stat-label">Total Views</div>
+        </div>
+    </div>
+
+    <div class="dashboard-row">
+        <div class="dashboard-panel">
+            <h2>Top Articles by Views</h2>
+            @if (stats.TopArticles.Any())
+            {
+                <div class="table-scroll">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Article</th>
+                            <th>Category</th>
+                            <th>Views</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var article in stats.TopArticles)
+                        {
+                            <tr>
+                                <td>
+                                    <a href="@($"/article/{article.Id}")" target="_blank">@article.Title</a>
+                                </td>
+                                <td>@article.CategoryName</td>
+                                <td>@article.ViewCount.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+            else
+            {
+                <p class="empty-state">No articles yet</p>
+            }
+        </div>
+
+        <div class="dashboard-panel">
+            <h2>Recent Feedback</h2>
+            @if (stats.RecentFeedback.Any())
+            {
+                <div class="table-scroll">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Article</th>
+                            <th>Rating</th>
+                            <th>Comment</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var fb in stats.RecentFeedback)
+                        {
+                            <tr>
+                                <td>
+                                    <a href="@($"/article/{fb.Article?.Id}")" target="_blank">@fb.Article?.Title</a>
+                                </td>
+                                <td>
+                                    <span class="rating-badge @GetRatingClass(fb.Rating)">@fb.Rating</span>
+                                </td>
+                                <td>@(fb.Comment ?? "—")</td>
+                                <td>@fb.CreatedAt.ToString("MMM d, yyyy HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                </div>
+            }
+            else
+            {
+                <p class="empty-state">No feedback yet</p>
+            }
+        </div>
+    </div>
+
+    <div class="dashboard-panel full-width">
+        <h2>Quick Actions</h2>
+        <div class="quick-actions">
+            @if (CanEditContent)
+            {
+                <a href="/admin/articles/new" class="btn-primary">+ New Article</a>
+                <a href="/admin/categories" class="btn-secondary">Manage Categories</a>
+                <a href="/admin/tags" class="btn-secondary">Manage Tags</a>
+            }
+            else
+            {
+                <a href="/admin/articles" class="btn-primary">Browse Articles</a>
+                <a href="/admin/categories" class="btn-secondary">View Categories</a>
+                <a href="/admin/tags" class="btn-secondary">View Tags</a>
+            }
+            @if (CanManageUsers)
+            {
+                <a href="/admin/users" class="btn-secondary">Manage Admins</a>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private DashboardStats? stats;
+    private string role = "Viewer";
+    private bool CanManageUsers => role == "SuperAdmin" || role == "Admin";
+    private bool CanEditContent => role != "Viewer";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name;
+        role = await UserService.GetUserRoleAsync(username);
+
+        stats = await ArticleService.GetDashboardStatsAsync();
+    }
+
+    private string GetRatingClass(FeedbackRating rating) => rating switch
+    {
+        FeedbackRating.Sad => "rating-sad",
+        FeedbackRating.Ok => "rating-ok",
+        FeedbackRating.VerySatisfied => "rating-happy",
+        _ => ""
+    };
+}
